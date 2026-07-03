@@ -465,7 +465,7 @@ def fetch_spot() -> list[dict]:
     try:
         return fetch_spot_efinance()
     except ImportError:
-        print("efinance is not installed; fallback to raw Eastmoney API", file=sys.stderr)
+        print("efinance is not installed; fallback to Tencent quote API", file=sys.stderr)
     except Exception as exc:
         print(f"efinance spot fetch failed: {exc}; fallback to Tencent quote API", file=sys.stderr)
     try:
