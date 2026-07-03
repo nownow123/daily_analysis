@@ -1,0 +1,2 @@
+﻿generated_at,status,stage,error
+2026-07-03 17:10:24,failed,行情数据获取,spot market data unavailable: market data request failed after retries: Remote end closed connection without response
