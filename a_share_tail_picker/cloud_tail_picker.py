@@ -52,7 +52,7 @@ MARKET_HOSTS = {
         "push2his.eastmoney.com",
     ],
 }
-SPOT_PAGE_SIZE = 100
+SPOT_PAGE_SIZE = 200
 A_SHARE_FS = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
 
 SPOT_FIELDS = ",".join(
@@ -290,7 +290,6 @@ def fetch_spot_page(page: int, page_size: int = SPOT_PAGE_SIZE) -> tuple[list[di
         "pz": page_size,
         "po": 1,
         "np": 1,
-        "ut": UT,
         "fltt": 2,
         "invt": 2,
         "fid": "f12",
@@ -306,6 +305,7 @@ def fetch_spot() -> list[dict]:
     rows = []
     last_error: Exception | None = None
     try:
+        page_size = SPOT_PAGE_SIZE
         for page in range(1, 100):
             page_rows = []
             total = 0
@@ -321,6 +321,8 @@ def fetch_spot() -> list[dict]:
                     time.sleep(0.6 * (attempt + 1))
             if page_error:
                 raise page_error
+            if page == 1 and page_rows and len(page_rows) < page_size:
+                page_size = len(page_rows)
             rows.extend(page_rows)
             if not page_rows or (total and len(rows) >= total):
                 break
