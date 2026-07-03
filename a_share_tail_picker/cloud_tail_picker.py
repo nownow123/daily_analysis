@@ -297,7 +297,7 @@ def fetch_spot_page(page: int, page_size: int = SPOT_PAGE_SIZE) -> tuple[list[di
         "fields": SPOT_FIELDS,
     }
     url = "http://push2.eastmoney.com/api/qt/clist/get?" + urllib.parse.urlencode(params)
-    data = fetch_json(url, retries=1, timeout=8, use_variants=True).get("data") or {}
+    data = fetch_json(url, retries=1, timeout=5, use_variants=True).get("data") or {}
     return data.get("diff") or [], int(data.get("total") or 0)
 
 
@@ -310,15 +310,15 @@ def fetch_spot() -> list[dict]:
             page_rows = []
             total = 0
             page_error: Exception | None = None
-            for attempt in range(3):
+            for attempt in range(8):
                 try:
                     page_rows, total = fetch_spot_page(page, SPOT_PAGE_SIZE)
                     page_error = None
                     break
                 except Exception as exc:
                     page_error = exc
-                    print(f"spot page {page} attempt {attempt + 1}/3 failed: {exc}", file=sys.stderr)
-                    time.sleep(0.6 * (attempt + 1))
+                    print(f"spot page {page} attempt {attempt + 1}/8 failed: {exc}", file=sys.stderr)
+                    time.sleep(min(6, 0.8 * (attempt + 1)))
             if page_error:
                 raise page_error
             if page == 1 and page_rows and len(page_rows) < page_size:
@@ -326,6 +326,7 @@ def fetch_spot() -> list[dict]:
             rows.extend(page_rows)
             if not page_rows or (total and len(rows) >= total):
                 break
+            time.sleep(0.25)
     except Exception as exc:
         last_error = exc
         rows = []
