@@ -21,6 +21,7 @@ import datetime as dt
 import json
 import math
 import os
+import random
 import sys
 import time
 import urllib.parse
@@ -40,6 +41,16 @@ UT = "bd1d9ddb04089700cf9c27f6f7426281"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
     "Referer": "https://quote.eastmoney.com/",
+}
+MARKET_HOSTS = {
+    "push2.eastmoney.com": [
+        "push2.eastmoney.com",
+        "82.push2.eastmoney.com",
+        "81.push2.eastmoney.com",
+    ],
+    "push2his.eastmoney.com": [
+        "push2his.eastmoney.com",
+    ],
 }
 
 SPOT_FIELDS = ",".join(
@@ -114,12 +125,23 @@ def stamp() -> str:
     return now_cn().strftime("%Y%m%d_%H%M%S")
 
 
-def fetch_json(url: str, retries: int = 3, timeout: int = 20) -> dict:
-    urls = [url]
-    if url.startswith("http://"):
-        urls.append("https://" + url[len("http://") :])
-    elif url.startswith("https://"):
-        urls.append("http://" + url[len("https://") :])
+class MarketDataError(RuntimeError):
+    pass
+
+
+def url_variants(url: str) -> list[str]:
+    parsed = urllib.parse.urlsplit(url)
+    hosts = MARKET_HOSTS.get(parsed.netloc, [parsed.netloc])
+    schemes = ["https", "http"] if parsed.scheme == "http" else [parsed.scheme, "http"]
+    variants = []
+    for host in hosts:
+        for scheme in schemes:
+            variants.append(urllib.parse.urlunsplit((scheme, host, parsed.path, parsed.query, parsed.fragment)))
+    return list(dict.fromkeys(variants))
+
+
+def fetch_json(url: str, retries: int = 5, timeout: int = 20) -> dict:
+    urls = url_variants(url)
     last_error: Exception | None = None
     for candidate in urls:
         for attempt in range(retries):
@@ -129,8 +151,10 @@ def fetch_json(url: str, retries: int = 3, timeout: int = 20) -> dict:
                     return json.loads(response.read().decode("utf-8", errors="replace"))
             except Exception as exc:
                 last_error = exc
-                time.sleep(0.8 * (attempt + 1))
-    raise RuntimeError(f"market data request failed: {last_error}")
+                delay = min(8, 0.9 * (attempt + 1)) + random.random() * 0.4
+                print(f"market data retry {attempt + 1}/{retries}: {candidate} -> {exc}", file=sys.stderr)
+                time.sleep(delay)
+    raise MarketDataError(f"market data request failed after retries: {last_error}")
 
 
 def f(value):
@@ -226,10 +250,10 @@ def normalize(row: dict) -> dict:
     }
 
 
-def fetch_spot() -> list[dict]:
+def fetch_spot_page(page: int, page_size: int) -> list[dict]:
     params = {
-        "pn": 1,
-        "pz": 6000,
+        "pn": page,
+        "pz": page_size,
         "po": 1,
         "np": 1,
         "ut": UT,
@@ -240,7 +264,28 @@ def fetch_spot() -> list[dict]:
         "fields": SPOT_FIELDS,
     }
     url = "http://push2.eastmoney.com/api/qt/clist/get?" + urllib.parse.urlencode(params)
-    rows = (fetch_json(url).get("data") or {}).get("diff") or []
+    return (fetch_json(url).get("data") or {}).get("diff") or []
+
+
+def fetch_spot() -> list[dict]:
+    rows = []
+    last_error: Exception | None = None
+    for page_size in (1000, 500, 200):
+        rows = []
+        try:
+            for page in range(1, 30):
+                page_rows = fetch_spot_page(page, page_size)
+                rows.extend(page_rows)
+                if len(page_rows) < page_size:
+                    break
+            if rows:
+                break
+        except Exception as exc:
+            last_error = exc
+            print(f"spot page fetch failed with pz={page_size}: {exc}", file=sys.stderr)
+            continue
+    if not rows:
+        raise MarketDataError(f"spot market data unavailable: {last_error}")
     stocks = [normalize(row) for row in rows]
     clean = []
     for item in stocks:
@@ -658,6 +703,63 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict]) -> tup
     return csv_path, report_path
 
 
+def write_failure_outputs(error: Exception, stage: str = "行情数据获取") -> tuple[Path, Path]:
+    out = OUTPUT_DIR / today()
+    out.mkdir(parents=True, exist_ok=True)
+    base = stamp()
+    csv_path = out / f"candidates_failed_{base}.csv"
+    report_path = out / f"report_failed_{base}.md"
+    with csv_path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["generated_at", "status", "stage", "error"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "generated_at": now_cn().strftime("%Y-%m-%d %H:%M:%S"),
+                "status": "failed",
+                "stage": stage,
+                "error": str(error),
+            }
+        )
+    lines = [
+        "# A股尾盘选股报告（失败诊断）",
+        "",
+        f"- 生成时间：{now_cn().strftime('%Y-%m-%d %H:%M:%S %Z')}",
+        f"- 失败环节：{stage}",
+        f"- 错误信息：`{str(error)}`",
+        "- 判断：本次没有生成候选股，不应作为交易依据。",
+        "",
+        "## 可能原因",
+        "",
+        "- 东方财富公开行情接口临时返回 502/超时。",
+        "- GitHub Actions 所在网络到行情源不稳定。",
+        "- 非交易时段或行情源短暂维护导致数据不完整。",
+        "",
+        "## 已做兜底",
+        "",
+        "- 已改为分页拉取全市场行情，降低单次请求压力。",
+        "- 已对 http/https 和备用行情域名做多轮重试。",
+        "- 已生成本诊断报告，后续 Issue 和企业微信通知不会再因为空报告中断。",
+        "",
+        "> 本报告只做公开行情筛选和策略复盘，不构成买卖指令。",
+    ]
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return csv_path, report_path
+
+
+def write_learning_failure_report(error: Exception) -> Path:
+    LEARNING_DIR.mkdir(parents=True, exist_ok=True)
+    path = LEARNING_DIR / f"learning_report_failed_{stamp()}.md"
+    lines = [
+        "# 策略学习报告（失败诊断）",
+        "",
+        f"- 生成时间：{now_cn().strftime('%Y-%m-%d %H:%M:%S %Z')}",
+        f"- 错误信息：`{str(error)}`",
+        "- 本次学习步骤失败，不自动调整参数。",
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
 def run_picker(args) -> tuple[Path, Path]:
     stocks = fetch_spot()
     sector_by_name, sectors = sector_stats(stocks)
@@ -830,8 +932,16 @@ def learn(cost_pct: float, min_samples: int) -> Path:
 def run_daily(args) -> None:
     LEARNING_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    learning_report = learn(args.cost_pct, args.min_samples)
-    csv_path, report_path = run_picker(args)
+    try:
+        learning_report = learn(args.cost_pct, args.min_samples)
+    except Exception as exc:
+        print(f"LEARNING_FAILED: {exc}", file=sys.stderr)
+        learning_report = write_learning_failure_report(exc)
+    try:
+        csv_path, report_path = run_picker(args)
+    except Exception as exc:
+        print(f"PICKER_FAILED: {exc}", file=sys.stderr)
+        csv_path, report_path = write_failure_outputs(exc)
     print(f"LEARNING_REPORT={learning_report}")
     print(f"CANDIDATES_CSV={csv_path}")
     print(f"REPORT={report_path}")
@@ -862,7 +972,11 @@ def main() -> int:
         if args.command == "daily":
             run_daily(args)
         elif args.command == "pick":
-            csv_path, report_path = run_picker(args)
+            try:
+                csv_path, report_path = run_picker(args)
+            except Exception as exc:
+                print(f"PICKER_FAILED: {exc}", file=sys.stderr)
+                csv_path, report_path = write_failure_outputs(exc)
             print(f"CANDIDATES_CSV={csv_path}")
             print(f"REPORT={report_path}")
         elif args.command == "learn":
