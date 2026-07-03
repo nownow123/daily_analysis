@@ -117,3 +117,60 @@ jobs:
           else
             gh issue comment "$issue" --body-file "$body"
           fi
+
+      - name: Send WeCom notification
+        if: always()
+        env:
+          WECOM_WEBHOOK_URL: ${{ secrets.WECOM_WEBHOOK_URL }}
+          REPORT: ${{ steps.picker.outputs.report }}
+          LEARNING_REPORT: ${{ steps.picker.outputs.learning_report }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          if [ -z "$WECOM_WEBHOOK_URL" ]; then
+            echo "WECOM_WEBHOOK_URL secret is not set; skip WeCom notification."
+            exit 0
+          fi
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
+
+          webhook = os.environ["WECOM_WEBHOOK_URL"]
+          run_url = os.environ["RUN_URL"]
+          repo_url = os.environ["REPO_URL"]
+          report_path = Path(os.environ.get("REPORT", ""))
+          learning_path = Path(os.environ.get("LEARNING_REPORT", ""))
+
+          parts = ["# A股尾盘选股日报", ""]
+          if learning_path.exists():
+              text = learning_path.read_text(encoding="utf-8", errors="replace")
+              parts.append(text[:1200])
+              parts.append("")
+          if report_path.exists():
+              text = report_path.read_text(encoding="utf-8", errors="replace")
+              parts.append(text[:2400])
+          else:
+              parts.append("本次未生成选股报告，请查看 Actions 日志。")
+          parts.extend(["", f"[查看运行日志]({run_url})", f"[查看仓库]({repo_url})", "", "> 仅供策略筛选和复盘，不构成买卖指令。"])
+          content = "\n".join(parts)
+          encoded = content.encode("utf-8")
+          if len(encoded) > 3900:
+              encoded = encoded[:3900]
+              content = encoded.decode("utf-8", errors="ignore") + "\n\n...内容已截断，请查看 GitHub 报告。"
+
+          payload = {
+              "msgtype": "markdown",
+              "markdown": {"content": content},
+          }
+          req = urllib.request.Request(
+              webhook,
+              data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          with urllib.request.urlopen(req, timeout=20) as response:
+              body = response.read().decode("utf-8", errors="replace")
+          print(body)
+          PY

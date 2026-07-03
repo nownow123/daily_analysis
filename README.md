@@ -42,6 +42,26 @@ That corresponds to 14:45 Asia/Shanghai.
 - `a_share_tail_picker/learning/samples.csv`
 - `a_share_tail_picker/learning/adaptive_rules.json`
 
+## WeChat Notification
+
+The recommended path is WeCom group bot webhook. GitHub Actions sends a Markdown notification to a WeCom group, and the message is visible on mobile WeChat/WeCom.
+
+Steps:
+
+1. Create or open a WeCom group.
+2. Add a group bot and copy its webhook URL.
+3. In this GitHub repository, open **Settings -> Secrets and variables -> Actions**.
+4. Create a repository secret named:
+
+```text
+WECOM_WEBHOOK_URL
+```
+
+5. Paste the webhook URL as the secret value.
+6. Run **Actions -> A Share Tail Picker -> Run workflow** once to test.
+
+If `WECOM_WEBHOOK_URL` is not configured, the workflow will skip WeCom notification and still write GitHub Issues, artifacts, and repository reports.
+
 ## Important Boundary
 
 This project is a research and screening tool only. It does not place orders and does not provide guaranteed returns. Always verify market data, announcements, liquidity, and risk in your trading software before making decisions.
