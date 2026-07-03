@@ -1,0 +1,1 @@
+﻿sample_id,status,pick_date,pick_time,next_date,code,name,industry,conclusion,score,market_score,sector_score,trend_score,quant_score,intraday_score,risk_score,pct,price,volume_ratio,turnover,amount,float_mv,sector_rank,late_return,last5_return,day_range_pos,return_open,return_0945,return_1000,best_return_before_1000,worst_return_before_1000,net_return_1000,flags,updated_at,note
