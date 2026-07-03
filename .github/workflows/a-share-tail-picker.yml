@@ -32,7 +32,7 @@ jobs:
         id: picker
         run: |
           set -o pipefail
-          python3 a_share_tail_picker/cloud_tail_picker.py daily --top 30 --max-detail 160 --workers 8 2>&1 | tee run.log
+          python3 a_share_tail_picker/cloud_tail_picker.py daily --top 30 --max-detail 90 --workers 8 2>&1 | tee run.log
           report="$(grep '^REPORT=' run.log | tail -1 | cut -d= -f2-)"
           learning_report="$(grep '^LEARNING_REPORT=' run.log | tail -1 | cut -d= -f2-)"
           candidates="$(grep '^CANDIDATES_CSV=' run.log | tail -1 | cut -d= -f2-)"

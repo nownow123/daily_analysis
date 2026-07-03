@@ -140,10 +140,10 @@ def url_variants(url: str) -> list[str]:
     return list(dict.fromkeys(variants))
 
 
-def fetch_json(url: str, retries: int = 5, timeout: int = 20) -> dict:
-    urls = url_variants(url)
+def fetch_json(url: str, retries: int = 5, timeout: int = 20, use_variants: bool = True) -> dict:
+    urls = url_variants(url) if use_variants else [url]
     last_error: Exception | None = None
-    for candidate in urls:
+    for url_index, candidate in enumerate(urls):
         for attempt in range(retries):
             try:
                 req = urllib.request.Request(candidate, headers=HEADERS)
@@ -151,9 +151,11 @@ def fetch_json(url: str, retries: int = 5, timeout: int = 20) -> dict:
                     return json.loads(response.read().decode("utf-8", errors="replace"))
             except Exception as exc:
                 last_error = exc
-                delay = min(8, 0.9 * (attempt + 1)) + random.random() * 0.4
                 print(f"market data retry {attempt + 1}/{retries}: {candidate} -> {exc}", file=sys.stderr)
-                time.sleep(delay)
+                is_last_try = url_index == len(urls) - 1 and attempt == retries - 1
+                if not is_last_try:
+                    delay = min(8, 0.9 * (attempt + 1)) + random.random() * 0.4
+                    time.sleep(delay)
     raise MarketDataError(f"market data request failed after retries: {last_error}")
 
 
@@ -264,7 +266,7 @@ def fetch_spot_page(page: int, page_size: int) -> list[dict]:
         "fields": SPOT_FIELDS,
     }
     url = "http://push2.eastmoney.com/api/qt/clist/get?" + urllib.parse.urlencode(params)
-    return (fetch_json(url).get("data") or {}).get("diff") or []
+    return (fetch_json(url, retries=5, timeout=15, use_variants=True).get("data") or {}).get("diff") or []
 
 
 def fetch_spot() -> list[dict]:
@@ -368,7 +370,7 @@ def fetch_kline(code: str) -> list[dict]:
         "end": "20500101",
     }
     url = "http://push2his.eastmoney.com/api/qt/stock/kline/get?" + urllib.parse.urlencode(params)
-    lines = (fetch_json(url).get("data") or {}).get("klines") or []
+    lines = (fetch_json(url, retries=1, timeout=6, use_variants=False).get("data") or {}).get("klines") or []
     rows = []
     for line in lines:
         part = line.split(",")
@@ -399,7 +401,7 @@ def fetch_trends(code: str, ndays: int = 1) -> list[dict]:
         "iscca": 0,
     }
     url = "http://push2his.eastmoney.com/api/qt/stock/trends2/get?" + urllib.parse.urlencode(params)
-    lines = (fetch_json(url).get("data") or {}).get("trends") or []
+    lines = (fetch_json(url, retries=1, timeout=6, use_variants=False).get("data") or {}).get("trends") or []
     rows = []
     for line in lines:
         part = line.split(",")
