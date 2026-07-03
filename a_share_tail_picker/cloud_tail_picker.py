@@ -52,6 +52,8 @@ MARKET_HOSTS = {
         "push2his.eastmoney.com",
     ],
 }
+SPOT_PAGE_SIZE = 100
+A_SHARE_FS = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
 
 SPOT_FIELDS = ",".join(
     [
@@ -153,7 +155,7 @@ def fetch_json(url: str, retries: int = 5, timeout: int = 20, use_variants: bool
                 last_error = exc
                 print(f"market data retry {attempt + 1}/{retries}: {candidate} -> {exc}", file=sys.stderr)
                 is_last_try = url_index == len(urls) - 1 and attempt == retries - 1
-                if not is_last_try:
+                if not is_last_try and retries > 1:
                     delay = min(8, 0.9 * (attempt + 1)) + random.random() * 0.4
                     time.sleep(delay)
     raise MarketDataError(f"market data request failed after retries: {last_error}")
@@ -210,8 +212,33 @@ def fmt_yi(value):
     return "-" if value is None else f"{value / 100000000:.1f}亿"
 
 
+def range_pos(price, high, low):
+    price = f(price)
+    high = f(high)
+    low = f(low)
+    if price is None or high is None or low is None or high <= low:
+        return None
+    return (price - low) / (high - low)
+
+
 def secid(code: str) -> str:
     return f"1.{code}" if code.startswith(("5", "6", "9")) else f"0.{code}"
+
+
+def exchange_prefix(code: str) -> str:
+    if code.startswith(("5", "6", "9")):
+        return "sh"
+    if code.startswith(("8", "4", "920")):
+        return "bj"
+    return "sz"
+
+
+def stock_url(code: str) -> str:
+    return f"https://quote.eastmoney.com/{exchange_prefix(code)}{code}.html"
+
+
+def stock_link(row: dict) -> str:
+    return f"[{row['name']} {row['code']}]({row.get('stock_url') or stock_url(row['code'])})"
 
 
 def board(code: str) -> str:
@@ -234,25 +261,30 @@ def is_dual(code: str) -> bool:
 
 def normalize(row: dict) -> dict:
     code = str(row.get("f12") or "").strip()
+    price = f(row.get("f2"))
+    high = f(row.get("f15"))
+    low = f(row.get("f16"))
     return {
         "code": code,
         "name": str(row.get("f14") or "").strip(),
         "board": board(code),
-        "price": f(row.get("f2")),
+        "stock_url": stock_url(code),
+        "price": price,
         "pct": f(row.get("f3")),
         "amount": f(row.get("f6")),
         "turnover": f(row.get("f8")),
         "volume_ratio": f(row.get("f10")),
-        "high": f(row.get("f15")),
-        "low": f(row.get("f16")),
+        "high": high,
+        "low": low,
         "open": f(row.get("f17")),
         "preclose": f(row.get("f18")),
         "float_mv": f(row.get("f21")),
         "industry": str(row.get("f100") or "未分类").strip() or "未分类",
+        "day_range_pos": range_pos(price, high, low),
     }
 
 
-def fetch_spot_page(page: int, page_size: int) -> list[dict]:
+def fetch_spot_page(page: int, page_size: int = SPOT_PAGE_SIZE) -> tuple[list[dict], int]:
     params = {
         "pn": page,
         "pz": page_size,
@@ -261,36 +293,50 @@ def fetch_spot_page(page: int, page_size: int) -> list[dict]:
         "ut": UT,
         "fltt": 2,
         "invt": 2,
-        "fid": "f3",
-        "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
+        "fid": "f12",
+        "fs": A_SHARE_FS,
         "fields": SPOT_FIELDS,
     }
     url = "http://push2.eastmoney.com/api/qt/clist/get?" + urllib.parse.urlencode(params)
-    return (fetch_json(url, retries=5, timeout=15, use_variants=True).get("data") or {}).get("diff") or []
+    data = fetch_json(url, retries=1, timeout=8, use_variants=True).get("data") or {}
+    return data.get("diff") or [], int(data.get("total") or 0)
 
 
 def fetch_spot() -> list[dict]:
     rows = []
     last_error: Exception | None = None
-    for page_size in (1000, 500, 200):
-        rows = []
-        try:
-            for page in range(1, 30):
-                page_rows = fetch_spot_page(page, page_size)
-                rows.extend(page_rows)
-                if len(page_rows) < page_size:
+    try:
+        for page in range(1, 100):
+            page_rows = []
+            total = 0
+            page_error: Exception | None = None
+            for attempt in range(3):
+                try:
+                    page_rows, total = fetch_spot_page(page, SPOT_PAGE_SIZE)
+                    page_error = None
                     break
-            if rows:
+                except Exception as exc:
+                    page_error = exc
+                    print(f"spot page {page} attempt {attempt + 1}/3 failed: {exc}", file=sys.stderr)
+                    time.sleep(0.6 * (attempt + 1))
+            if page_error:
+                raise page_error
+            rows.extend(page_rows)
+            if not page_rows or (total and len(rows) >= total):
                 break
-        except Exception as exc:
-            last_error = exc
-            print(f"spot page fetch failed with pz={page_size}: {exc}", file=sys.stderr)
-            continue
+    except Exception as exc:
+        last_error = exc
+        rows = []
+        print(f"spot page fetch failed: {exc}", file=sys.stderr)
     if not rows:
         raise MarketDataError(f"spot market data unavailable: {last_error}")
     stocks = [normalize(row) for row in rows]
     clean = []
+    seen = set()
     for item in stocks:
+        if item["code"] in seen:
+            continue
+        seen.add(item["code"])
         name = item["name"].upper()
         if item["board"] == "其他" or item["board"] == "北交所":
             continue
@@ -359,7 +405,7 @@ def score_sector(stat: dict | None) -> int:
 
 
 def fetch_kline(code: str) -> list[dict]:
-    begin = (now_cn() - dt.timedelta(days=200)).strftime("%Y%m%d")
+    begin = "20200101"
     params = {
         "secid": secid(code),
         "fields1": "f1,f2,f3,f4,f5,f6",
@@ -370,7 +416,7 @@ def fetch_kline(code: str) -> list[dict]:
         "end": "20500101",
     }
     url = "http://push2his.eastmoney.com/api/qt/stock/kline/get?" + urllib.parse.urlencode(params)
-    lines = (fetch_json(url, retries=1, timeout=6, use_variants=False).get("data") or {}).get("klines") or []
+    lines = (fetch_json(url, retries=1, timeout=8, use_variants=True).get("data") or {}).get("klines") or []
     rows = []
     for line in lines:
         part = line.split(",")
@@ -401,7 +447,7 @@ def fetch_trends(code: str, ndays: int = 1) -> list[dict]:
         "iscca": 0,
     }
     url = "http://push2his.eastmoney.com/api/qt/stock/trends2/get?" + urllib.parse.urlencode(params)
-    lines = (fetch_json(url, retries=1, timeout=6, use_variants=False).get("data") or {}).get("trends") or []
+    lines = (fetch_json(url, retries=1, timeout=8, use_variants=True).get("data") or {}).get("trends") or []
     rows = []
     for line in lines:
         part = line.split(",")
@@ -566,6 +612,79 @@ def risk_score(flags: list[str]) -> int:
     return max(score, 0)
 
 
+def between(value, low, high) -> bool:
+    value = f(value)
+    return value is not None and low <= value <= high
+
+
+def strict_short_blockers(row: dict, focus_min: int) -> list[str]:
+    blockers = []
+    dual = is_dual(row["code"])
+    if (f(row.get("market_score")) or 0) < 8:
+        blockers.append("市场环境逆风")
+    if (f(row.get("score")) or 0) < focus_min:
+        blockers.append(f"总分低于{focus_min}")
+    if dual:
+        if not between(row.get("pct"), 3, 8):
+            blockers.append("双创涨幅不在3%-8%")
+        if not between(row.get("turnover"), 5, 15):
+            blockers.append("双创换手不在5%-15%")
+    else:
+        if not between(row.get("pct"), 2, 6):
+            blockers.append("主板涨幅不在2%-6%")
+        if not between(row.get("turnover"), 4, 12):
+            blockers.append("主板换手不在4%-12%")
+    if not between(row.get("volume_ratio"), 1.2, 3.5):
+        blockers.append("量比不在1.2-3.5")
+    if (f(row.get("amount")) or 0) < 3e8:
+        blockers.append("成交额不足3亿")
+    if not between(row.get("float_mv"), 5e9, 3e10):
+        blockers.append("流通市值不在50-300亿")
+    if not between(row.get("day_range_pos"), 0.65, 1.05):
+        blockers.append("日内位置不够靠前")
+    if not between(row.get("intraday_range_pos"), 0.65, 1.05):
+        blockers.append("尾盘分时位置不够靠前")
+    if f(row.get("late_return")) is None or f(row.get("late_return")) < 0:
+        blockers.append("14:30后未走强")
+    if f(row.get("trend_score")) is None or f(row.get("trend_score")) < 10:
+        blockers.append("日K结构不够强")
+    if f(row.get("intraday_score")) is None or f(row.get("intraday_score")) < 14:
+        blockers.append("分时结构不够强")
+    if f(row.get("risk_score")) is None or f(row.get("risk_score")) < 8:
+        blockers.append("风险扣分偏多")
+    flags = str(row.get("flags") or "")
+    hard_bad = [
+        "获取失败",
+        "数据不足",
+        "分时数据缺失",
+        "尚未进入14:30",
+        "分时未站上均价线",
+        "未站上20日线",
+        "短均线结构不强",
+        "日内位置偏低",
+        "尾盘不在日内高位",
+        "14:30后走弱",
+        "最后5分钟急拉",
+    ]
+    for keyword in hard_bad:
+        if keyword in flags:
+            blockers.append(keyword)
+    return list(dict.fromkeys(blockers))
+
+
+def concise_reason(row: dict) -> str:
+    parts = []
+    if row.get("sector_rank"):
+        parts.append(f"板块第{row['sector_rank']}")
+    if f(row.get("late_return")) is not None:
+        parts.append(f"14:30后{fmt_pct(row['late_return'])}")
+    if f(row.get("intraday_range_pos")) is not None:
+        parts.append(f"分时位置{f(row['intraday_range_pos']) * 100:.0f}%")
+    if f(row.get("day_range_pos")) is not None:
+        parts.append(f"日内位置{f(row['day_range_pos']) * 100:.0f}%")
+    return "；".join(parts) if parts else "通过短线硬条件"
+
+
 def analyze_one(stock: dict, sector_by_name: dict, market: dict, rules: dict) -> dict:
     flags = []
     quant, q_flags = score_quant(stock)
@@ -587,7 +706,6 @@ def analyze_one(stock: dict, sector_by_name: dict, market: dict, rules: dict) ->
     score = max(0, min(100, market["score"] + sector + trend + quant + intraday + risk - penalty))
     high_risk = any(key in "；".join(flags) for key in ["分时未站上均价线", "未站上20日线", "最后5分钟急拉", "流通市值不适合", "成交额不足"])
     focus_min = int(rules.get("min_score_for_focus") or 80)
-    conclusion = "市场逆风，默认空仓/只观察" if market["score"] < 8 else "重点观察" if score >= focus_min and not high_risk else "只观察" if score >= 70 else "暂不做"
     row = dict(stock)
     row.update(detail)
     row.update(i_detail)
@@ -604,28 +722,32 @@ def analyze_one(stock: dict, sector_by_name: dict, market: dict, rules: dict) ->
             "risk_score": risk,
             "adaptive_penalty": penalty,
             "score": score,
-            "conclusion": conclusion,
             "flags": "；".join(dict.fromkeys(flags)) if flags else "无明显扣分项",
             "adaptive_hits": "；".join(hits),
             "sector_rank": sector_stat["rank"] if sector_stat else "",
             "sector_avg_pct": sector_stat["avg_pct"] if sector_stat else "",
         }
     )
+    blockers = strict_short_blockers(row, focus_min)
+    row["short_blockers"] = "；".join(blockers)
+    row["short_ready"] = "是" if not blockers and not high_risk else "否"
+    row["conclusion"] = "短线候选" if row["short_ready"] == "是" else "不推荐"
+    row["short_reason"] = concise_reason(row)
     return row
 
 
 def initial_pool(stock: dict) -> bool:
-    max_pct = 18 if is_dual(stock["code"]) else 10.5
+    dual = is_dual(stock["code"])
+    pct_ok = between(stock["pct"], 3, 8) if dual else between(stock["pct"], 2, 6)
+    turn_ok = between(stock["turnover"], 5, 15) if dual else between(stock["turnover"], 4, 12)
     return (
-        stock["pct"] is not None
-        and 1 <= stock["pct"] <= max_pct
+        pct_ok
         and stock["amount"] is not None
-        and stock["amount"] >= 1e8
-        and stock["turnover"] is not None
-        and stock["turnover"] >= 1
-        and stock["float_mv"] is not None
-        and 3e9 <= stock["float_mv"] <= 8e10
-        and (stock["volume_ratio"] is None or stock["volume_ratio"] >= 0.7)
+        and stock["amount"] >= 3e8
+        and turn_ok
+        and between(stock["float_mv"], 5e9, 3e10)
+        and between(stock["volume_ratio"], 1.2, 3.5)
+        and between(stock.get("day_range_pos"), 0.65, 1.05)
     )
 
 
@@ -634,7 +756,51 @@ def basic_rank(stock: dict, sector_by_name: dict, market: dict) -> int:
     return market["score"] + score_sector(sector_by_name.get(stock["industry"])) + quant
 
 
-def write_candidates(rows: list[dict], market: dict, sectors: list[dict]) -> tuple[Path, Path]:
+def write_wechat_summary(rows: list[dict], market: dict, stats: dict, report_path: Path | None = None) -> Path:
+    out = OUTPUT_DIR / today()
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"wechat_summary_{stamp()}.md"
+    lines = [
+        "# A股尾盘短线候选",
+        "",
+        f"时间：{now_cn().strftime('%Y-%m-%d %H:%M')}",
+        f"市场：{market['label']} {market['score']}/20",
+        f"覆盖：沪深A股 {stats['universe_count']} 只",
+        f"硬条件：{stats['hard_pool_count']} 只",
+        f"严格候选：{len(rows)} 只",
+        "",
+        "仅作公开行情筛选和复盘，不构成买卖指令。",
+        "",
+    ]
+    if not rows:
+        lines.extend(
+            [
+                "今日没有严格候选。",
+                "",
+                "原因：全市场筛选后，没有股票同时满足涨幅、量比、换手、流通市值、日内位置、尾盘分时、日K结构和风险条件。",
+            ]
+        )
+    else:
+        for index, row in enumerate(rows[:8], 1):
+            lines.extend(
+                [
+                    f"{index}. {stock_link(row)}",
+                    f"分数：{row['score']} | {row['industry']} | {row['board']}",
+                    f"涨幅：{fmt_pct(row['pct'])} | 量比：{fmt_num(row['volume_ratio'])} | 换手：{fmt_pct(row['turnover'])}",
+                    f"成交：{fmt_yi(row['amount'])} | 流通：{fmt_yi(row['float_mv'])}",
+                    f"理由：{row.get('short_reason') or '通过短线硬条件'}",
+                    "",
+                ]
+            )
+        if len(rows) > 8:
+            lines.append(f"另有 {len(rows) - 8} 只候选，见完整报告。")
+    if report_path:
+        lines.extend(["", f"本地报告：{report_path.name}"])
+    path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    return path
+
+
+def write_candidates(rows: list[dict], market: dict, sectors: list[dict], stats: dict) -> tuple[Path, Path, Path]:
     out = OUTPUT_DIR / today()
     out.mkdir(parents=True, exist_ok=True)
     base = stamp()
@@ -646,8 +812,12 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict]) -> tup
         "generated_at",
         "score",
         "conclusion",
+        "short_ready",
+        "short_reason",
+        "short_blockers",
         "code",
         "name",
+        "stock_url",
         "board",
         "industry",
         "pct",
@@ -663,6 +833,7 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict]) -> tup
         "quant_score",
         "intraday_score",
         "risk_score",
+        "last_time",
         "late_return",
         "last5_return",
         "day_range_pos",
@@ -679,7 +850,14 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict]) -> tup
         "",
         f"- 生成时间：{now_cn().strftime('%Y-%m-%d %H:%M:%S %Z')}",
         f"- 市场环境：{market['label']}，{market['score']}/20，上涨占比 {market['adv_ratio']:.1%}，平均涨幅 {market['avg_pct']:.2f}%",
+        f"- 筛选覆盖：沪深A股 {stats['universe_count']} 只；短线硬条件通过 {stats['hard_pool_count']} 只；完成明细评分 {stats['detail_count']} 只；严格候选 {len(rows)} 只。",
         "- 边界：本报告只做公开行情筛选与研究排序，不构成买卖指令。",
+        "",
+        "## 严格短线口径",
+        "",
+        "- 主板：涨幅 2%-6%，换手 4%-12%；双创：涨幅 3%-8%，换手 5%-15%。",
+        "- 共同条件：量比 1.2-3.5，成交额不低于 3 亿，流通市值 50-300 亿，日内位置和尾盘分时位置靠前。",
+        "- 排除：ST/退市/新股、分时或日K数据缺失、14:30后走弱、未站上关键均线、最后5分钟急拉放量。",
         "",
         "## 强势板块 Top 5",
         "",
@@ -690,27 +868,32 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict]) -> tup
         lines.append(f"| {item['rank']} | {item['industry']} | {fmt_pct(item['avg_pct'])} | {item['adv_ratio']:.0%} | {item['strong_count']} |")
     lines += [
         "",
-        "## 候选清单",
+        "## 严格候选清单",
         "",
-        "| 分数 | 结论 | 代码 | 名称 | 行业 | 涨幅 | 量比 | 换手 | 成交额 | 流通市值 | 风险 |",
-        "|---:|---|---|---|---|---:|---:|---:|---:|---:|---|",
+        "| 分数 | 股票 | 行业 | 涨幅 | 量比 | 换手 | 成交额 | 流通市值 | 短线理由 |",
+        "|---:|---|---|---:|---:|---:|---:|---:|---|",
     ]
-    for row in rows:
-        lines.append(
-            f"| {row['score']} | {row['conclusion']} | {row['code']} | {row['name']} | {row['industry']} | "
-            f"{fmt_pct(row['pct'])} | {fmt_num(row['volume_ratio'])} | {fmt_pct(row['turnover'])} | "
-            f"{fmt_yi(row['amount'])} | {fmt_yi(row['float_mv'])} | {row['flags']} |"
-        )
+    if rows:
+        for row in rows:
+            lines.append(
+                f"| {row['score']} | {stock_link(row)} | {row['industry']} | "
+                f"{fmt_pct(row['pct'])} | {fmt_num(row['volume_ratio'])} | {fmt_pct(row['turnover'])} | "
+                f"{fmt_yi(row['amount'])} | {fmt_yi(row['float_mv'])} | {row.get('short_reason') or '-'} |"
+            )
+    else:
+        lines.append("| - | 今日无严格候选 | - | - | - | - | - | - | 全市场筛选后无股票同时满足硬条件和分时/K线验证 |")
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return csv_path, report_path
+    wechat_path = write_wechat_summary(rows, market, stats, report_path)
+    return csv_path, report_path, wechat_path
 
 
-def write_failure_outputs(error: Exception, stage: str = "行情数据获取") -> tuple[Path, Path]:
+def write_failure_outputs(error: Exception, stage: str = "行情数据获取") -> tuple[Path, Path, Path]:
     out = OUTPUT_DIR / today()
     out.mkdir(parents=True, exist_ok=True)
     base = stamp()
     csv_path = out / f"candidates_failed_{base}.csv"
     report_path = out / f"report_failed_{base}.md"
+    wechat_path = out / f"wechat_summary_failed_{base}.md"
     with csv_path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=["generated_at", "status", "stage", "error"])
         writer.writeheader()
@@ -745,7 +928,23 @@ def write_failure_outputs(error: Exception, stage: str = "行情数据获取") -
         "> 本报告只做公开行情筛选和策略复盘，不构成买卖指令。",
     ]
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return csv_path, report_path
+    wechat_path.write_text(
+        "\n".join(
+            [
+                "# A股尾盘短线候选",
+                "",
+                f"时间：{now_cn().strftime('%Y-%m-%d %H:%M')}",
+                "本次未生成候选。",
+                f"失败环节：{stage}",
+                f"错误：{str(error)}",
+                "",
+                "仅作公开行情筛选和复盘，不构成买卖指令。",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return csv_path, report_path, wechat_path
 
 
 def write_learning_failure_report(error: Exception) -> Path:
@@ -762,14 +961,16 @@ def write_learning_failure_report(error: Exception) -> Path:
     return path
 
 
-def run_picker(args) -> tuple[Path, Path]:
+def run_picker(args) -> tuple[Path, Path, Path]:
     stocks = fetch_spot()
     sector_by_name, sectors = sector_stats(stocks)
     market = score_market(stocks, sectors)
     rules = load_rules()
     pool = [stock for stock in stocks if initial_pool(stock)]
     pool.sort(key=lambda stock: basic_rank(stock, sector_by_name, market), reverse=True)
-    pool = pool[: args.max_detail]
+    hard_pool_count = len(pool)
+    if args.max_detail and args.max_detail > 0:
+        pool = pool[: args.max_detail]
     rows = []
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
         futures = [executor.submit(analyze_one, stock, sector_by_name, market, rules) for stock in pool]
@@ -779,7 +980,15 @@ def run_picker(args) -> tuple[Path, Path]:
             except Exception as exc:
                 print(f"候选分析失败：{exc}", file=sys.stderr)
     rows.sort(key=lambda row: row["score"], reverse=True)
-    return write_candidates(rows[: args.top], market, sectors)
+    strict_rows = [row for row in rows if row.get("short_ready") == "是"]
+    strict_rows.sort(key=lambda row: row["score"], reverse=True)
+    stats = {
+        "universe_count": len(stocks),
+        "hard_pool_count": hard_pool_count,
+        "detail_count": len(rows),
+        "strict_count": len(strict_rows),
+    }
+    return write_candidates(strict_rows[: args.top], market, sectors, stats)
 
 
 def read_csv(path: Path) -> list[dict]:
@@ -799,6 +1008,8 @@ def latest_candidate_files() -> list[Path]:
     files = sorted(OUTPUT_DIR.glob("*/candidates_*.csv"))
     by_date = {}
     for path in files:
+        if path.name.startswith("candidates_failed_"):
+            continue
         if path.parent.name >= today():
             continue
         by_date[path.parent.name] = path
@@ -940,13 +1151,14 @@ def run_daily(args) -> None:
         print(f"LEARNING_FAILED: {exc}", file=sys.stderr)
         learning_report = write_learning_failure_report(exc)
     try:
-        csv_path, report_path = run_picker(args)
+        csv_path, report_path, wechat_path = run_picker(args)
     except Exception as exc:
         print(f"PICKER_FAILED: {exc}", file=sys.stderr)
-        csv_path, report_path = write_failure_outputs(exc)
+        csv_path, report_path, wechat_path = write_failure_outputs(exc)
     print(f"LEARNING_REPORT={learning_report}")
     print(f"CANDIDATES_CSV={csv_path}")
     print(f"REPORT={report_path}")
+    print(f"WECHAT_SUMMARY={wechat_path}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -954,13 +1166,13 @@ def parse_args() -> argparse.Namespace:
     sub = parser.add_subparsers(dest="command", required=True)
     daily = sub.add_parser("daily")
     daily.add_argument("--top", type=int, default=30)
-    daily.add_argument("--max-detail", type=int, default=160)
+    daily.add_argument("--max-detail", type=int, default=0)
     daily.add_argument("--workers", type=int, default=8)
     daily.add_argument("--cost-pct", type=float, default=0.15)
     daily.add_argument("--min-samples", type=int, default=30)
     pick = sub.add_parser("pick")
     pick.add_argument("--top", type=int, default=30)
-    pick.add_argument("--max-detail", type=int, default=160)
+    pick.add_argument("--max-detail", type=int, default=0)
     pick.add_argument("--workers", type=int, default=8)
     learn_cmd = sub.add_parser("learn")
     learn_cmd.add_argument("--cost-pct", type=float, default=0.15)
@@ -975,12 +1187,13 @@ def main() -> int:
             run_daily(args)
         elif args.command == "pick":
             try:
-                csv_path, report_path = run_picker(args)
+                csv_path, report_path, wechat_path = run_picker(args)
             except Exception as exc:
                 print(f"PICKER_FAILED: {exc}", file=sys.stderr)
-                csv_path, report_path = write_failure_outputs(exc)
+                csv_path, report_path, wechat_path = write_failure_outputs(exc)
             print(f"CANDIDATES_CSV={csv_path}")
             print(f"REPORT={report_path}")
+            print(f"WECHAT_SUMMARY={wechat_path}")
         elif args.command == "learn":
             print(f"LEARNING_REPORT={learn(args.cost_pct, args.min_samples)}")
         return 0

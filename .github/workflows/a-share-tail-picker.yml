@@ -32,11 +32,13 @@ jobs:
         id: picker
         run: |
           set -o pipefail
-          python3 a_share_tail_picker/cloud_tail_picker.py daily --top 30 --max-detail 90 --workers 8 2>&1 | tee run.log
+          python3 a_share_tail_picker/cloud_tail_picker.py daily --top 30 --max-detail 0 --workers 8 2>&1 | tee run.log
           report="$(grep '^REPORT=' run.log | tail -1 | cut -d= -f2-)"
+          wechat_summary="$(grep '^WECHAT_SUMMARY=' run.log | tail -1 | cut -d= -f2-)"
           learning_report="$(grep '^LEARNING_REPORT=' run.log | tail -1 | cut -d= -f2-)"
           candidates="$(grep '^CANDIDATES_CSV=' run.log | tail -1 | cut -d= -f2-)"
           echo "report=$report" >> "$GITHUB_OUTPUT"
+          echo "wechat_summary=$wechat_summary" >> "$GITHUB_OUTPUT"
           echo "learning_report=$learning_report" >> "$GITHUB_OUTPUT"
           echo "candidates=$candidates" >> "$GITHUB_OUTPUT"
 
@@ -123,6 +125,7 @@ jobs:
         env:
           WECOM_WEBHOOK_URL: ${{ secrets.WECOM_WEBHOOK_URL }}
           REPORT: ${{ steps.picker.outputs.report }}
+          WECHAT_SUMMARY: ${{ steps.picker.outputs.wechat_summary }}
           LEARNING_REPORT: ${{ steps.picker.outputs.learning_report }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
@@ -135,30 +138,39 @@ jobs:
           import json
           import os
           import urllib.request
+          from urllib.parse import quote
           from pathlib import Path
 
           webhook = os.environ["WECOM_WEBHOOK_URL"]
           run_url = os.environ["RUN_URL"]
           repo_url = os.environ["REPO_URL"]
           report_path = Path(os.environ.get("REPORT", ""))
-          learning_path = Path(os.environ.get("LEARNING_REPORT", ""))
+          summary_path = Path(os.environ.get("WECHAT_SUMMARY", ""))
 
-          parts = ["# A股尾盘选股日报", ""]
-          if learning_path.exists():
-              text = learning_path.read_text(encoding="utf-8", errors="replace")
-              parts.append(text[:1200])
-              parts.append("")
-          if report_path.exists():
-              text = report_path.read_text(encoding="utf-8", errors="replace")
-              parts.append(text[:2400])
+          if summary_path.exists():
+              content = summary_path.read_text(encoding="utf-8", errors="replace").strip()
+          elif report_path.exists():
+              content = report_path.read_text(encoding="utf-8", errors="replace").strip()[:1800]
           else:
-              parts.append("本次未生成选股报告，请查看 Actions 日志。")
-          parts.extend(["", f"[查看运行日志]({run_url})", f"[查看仓库]({repo_url})", "", "> 仅供策略筛选和复盘，不构成买卖指令。"])
-          content = "\n".join(parts)
+              content = "# A股尾盘短线候选\n\n本次未生成候选，请查看 Actions 日志。"
+
+          links = ["", f"[运行日志]({run_url})"]
+          if report_path.exists():
+              marker = "/daily_analysis/daily_analysis/"
+              report_text = str(report_path)
+              if marker in report_text:
+                  report_rel = report_text.split(marker, 1)[1]
+                  links.append(f"[完整报告]({repo_url}/blob/main/{quote(report_rel)})")
+              else:
+                  links.append(f"[仓库]({repo_url})")
+          else:
+              links.append(f"[仓库]({repo_url})")
+          content = content + "\n" + "\n".join(links)
           encoded = content.encode("utf-8")
           if len(encoded) > 3900:
-              encoded = encoded[:3900]
-              content = encoded.decode("utf-8", errors="ignore") + "\n\n...内容已截断，请查看 GitHub 报告。"
+              suffix = "\n\n更多内容见 GitHub 完整报告。"
+              encoded = encoded[: 3900 - len(suffix.encode("utf-8"))]
+              content = encoded.decode("utf-8", errors="ignore") + suffix
 
           payload = {
               "msgtype": "markdown",
