@@ -812,6 +812,14 @@ def concise_reason(row: dict) -> str:
     return "；".join(parts) if parts else "通过短线硬条件"
 
 
+def display_group(row: dict) -> str:
+    industry = str(row.get("industry") or "").strip()
+    board_name = str(row.get("board") or "").strip()
+    if industry and board_name and industry != board_name:
+        return f"{industry} | {board_name}"
+    return industry or board_name or "-"
+
+
 def analyze_one(stock: dict, sector_by_name: dict, market: dict, rules: dict) -> dict:
     flags = []
     quant, q_flags = score_quant(stock)
@@ -912,7 +920,7 @@ def write_wechat_summary(rows: list[dict], market: dict, stats: dict, report_pat
             lines.extend(
                 [
                     f"{index}. {stock_link(row)}",
-                    f"分数：{row['score']} | {row['industry']} | {row['board']}",
+                    f"分数：{row['score']} | {display_group(row)}",
                     f"涨幅：{fmt_pct(row['pct'])} | 量比：{fmt_num(row['volume_ratio'])} | 换手：{fmt_pct(row['turnover'])}",
                     f"成交：{fmt_yi(row['amount'])} | 流通：{fmt_yi(row['float_mv'])}",
                     f"理由：{row.get('short_reason') or '通过短线硬条件'}",
@@ -921,8 +929,6 @@ def write_wechat_summary(rows: list[dict], market: dict, stats: dict, report_pat
             )
         if len(rows) > 8:
             lines.append(f"另有 {len(rows) - 8} 只候选，见完整报告。")
-    if report_path:
-        lines.extend(["", f"本地报告：{report_path.name}"])
     path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
     return path
 
@@ -997,13 +1003,13 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict], stats:
         "",
         "## 严格候选清单",
         "",
-        "| 分数 | 股票 | 行业 | 涨幅 | 量比 | 换手 | 成交额 | 流通市值 | 短线理由 |",
+        "| 分数 | 股票 | 行业/分层 | 涨幅 | 量比 | 换手 | 成交额 | 流通市值 | 短线理由 |",
         "|---:|---|---|---:|---:|---:|---:|---:|---|",
     ]
     if rows:
         for row in rows:
             lines.append(
-                f"| {row['score']} | {stock_link(row)} | {row['industry']} | "
+                f"| {row['score']} | {stock_link(row)} | {display_group(row)} | "
                 f"{fmt_pct(row['pct'])} | {fmt_num(row['volume_ratio'])} | {fmt_pct(row['turnover'])} | "
                 f"{fmt_yi(row['amount'])} | {fmt_yi(row['float_mv'])} | {row.get('short_reason') or '-'} |"
             )
