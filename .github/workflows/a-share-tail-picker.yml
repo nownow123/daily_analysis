@@ -28,9 +28,6 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install market data helper
-        run: python -m pip install --disable-pip-version-check efinance
-
       - name: Run daily picker
         id: picker
         run: |
