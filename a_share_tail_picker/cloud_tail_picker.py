@@ -284,6 +284,62 @@ def normalize(row: dict) -> dict:
     }
 
 
+def normalize_efinance(row: dict) -> dict:
+    code = str(row.get("股票代码") or "").strip().zfill(6)
+    price = f(row.get("最新价"))
+    high = f(row.get("最高"))
+    low = f(row.get("最低"))
+    return {
+        "code": code,
+        "name": str(row.get("股票名称") or "").strip(),
+        "board": board(code),
+        "stock_url": stock_url(code),
+        "price": price,
+        "pct": f(row.get("涨跌幅")),
+        "amount": f(row.get("成交额")),
+        "turnover": f(row.get("换手率")),
+        "volume_ratio": f(row.get("量比")),
+        "high": high,
+        "low": low,
+        "open": f(row.get("今开")),
+        "preclose": f(row.get("昨日收盘")),
+        "float_mv": f(row.get("流通市值")),
+        "industry": str(row.get("行业") or row.get("市场类型") or "未分类").strip() or "未分类",
+        "day_range_pos": range_pos(price, high, low),
+    }
+
+
+def clean_spot(stocks: list[dict]) -> list[dict]:
+    clean = []
+    seen = set()
+    for item in stocks:
+        if item["code"] in seen:
+            continue
+        seen.add(item["code"])
+        name = item["name"].upper()
+        if item["board"] == "其他" or item["board"] == "北交所":
+            continue
+        if "ST" in name or "退" in name or item["name"].startswith(("N", "C")):
+            continue
+        if item["price"] in (None, 0) or item["pct"] is None:
+            continue
+        clean.append(item)
+    return clean
+
+
+def fetch_spot_efinance() -> list[dict]:
+    import efinance as ef  # type: ignore
+
+    frame = ef.stock.get_realtime_quotes()
+    rows = frame.to_dict("records")
+    stocks = [normalize_efinance(row) for row in rows]
+    clean = clean_spot(stocks)
+    if not clean:
+        raise MarketDataError("efinance returned no usable A-share rows")
+    print(f"spot source: efinance rows={len(clean)}", file=sys.stderr)
+    return clean
+
+
 def fetch_spot_page(page: int, page_size: int = SPOT_PAGE_SIZE) -> tuple[list[dict], int]:
     params = {
         "pn": page,
@@ -301,7 +357,7 @@ def fetch_spot_page(page: int, page_size: int = SPOT_PAGE_SIZE) -> tuple[list[di
     return data.get("diff") or [], int(data.get("total") or 0)
 
 
-def fetch_spot() -> list[dict]:
+def fetch_spot_eastmoney() -> list[dict]:
     rows = []
     last_error: Exception | None = None
     try:
@@ -334,21 +390,19 @@ def fetch_spot() -> list[dict]:
     if not rows:
         raise MarketDataError(f"spot market data unavailable: {last_error}")
     stocks = [normalize(row) for row in rows]
-    clean = []
-    seen = set()
-    for item in stocks:
-        if item["code"] in seen:
-            continue
-        seen.add(item["code"])
-        name = item["name"].upper()
-        if item["board"] == "其他" or item["board"] == "北交所":
-            continue
-        if "ST" in name or "退" in name or item["name"].startswith(("N", "C")):
-            continue
-        if item["price"] in (None, 0) or item["pct"] is None:
-            continue
-        clean.append(item)
+    clean = clean_spot(stocks)
+    print(f"spot source: eastmoney rows={len(clean)}", file=sys.stderr)
     return clean
+
+
+def fetch_spot() -> list[dict]:
+    try:
+        return fetch_spot_efinance()
+    except ImportError:
+        print("efinance is not installed; fallback to raw Eastmoney API", file=sys.stderr)
+    except Exception as exc:
+        print(f"efinance spot fetch failed: {exc}; fallback to raw Eastmoney API", file=sys.stderr)
+    return fetch_spot_eastmoney()
 
 
 def sector_stats(stocks: list[dict]) -> tuple[dict, list[dict]]:
