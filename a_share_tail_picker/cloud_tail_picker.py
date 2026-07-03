@@ -237,6 +237,10 @@ def stock_url(code: str) -> str:
     return f"https://quote.eastmoney.com/{exchange_prefix(code)}{code}.html"
 
 
+def tencent_symbol(code: str) -> str:
+    return f"{exchange_prefix(code)}{code}"
+
+
 def stock_link(row: dict) -> str:
     return f"[{row['name']} {row['code']}]({row.get('stock_url') or stock_url(row['code'])})"
 
@@ -532,6 +536,16 @@ def score_sector(stat: dict | None) -> int:
 
 
 def fetch_kline(code: str) -> list[dict]:
+    try:
+        rows = fetch_kline_tencent(code)
+        if rows:
+            return rows
+    except Exception as exc:
+        print(f"Tencent kline failed for {code}: {exc}; fallback to Eastmoney", file=sys.stderr)
+    return fetch_kline_eastmoney(code)
+
+
+def fetch_kline_eastmoney(code: str) -> list[dict]:
     begin = "20200101"
     params = {
         "secid": secid(code),
@@ -564,7 +578,58 @@ def fetch_kline(code: str) -> list[dict]:
     return rows
 
 
+def fetch_kline_tencent(code: str, days: int = 160) -> list[dict]:
+    symbol = tencent_symbol(code)
+    url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={symbol},day,,,{days},qfq"
+    req = urllib.request.Request(url, headers={"User-Agent": HEADERS["User-Agent"], "Referer": "https://gu.qq.com/"})
+    with urllib.request.urlopen(req, timeout=12) as response:
+        data = json.loads(response.read().decode("utf-8", errors="replace"))
+    payload = ((data.get("data") or {}).get(symbol) or {})
+    lines = payload.get("qfqday") or payload.get("day") or []
+    rows = []
+    previous_close = None
+    for part in lines:
+        if len(part) < 6:
+            continue
+        close = f(part[2])
+        pct_value = pct(close, previous_close) if previous_close else None
+        rows.append(
+            {
+                "date": part[0],
+                "open": f(part[1]),
+                "close": close,
+                "high": f(part[3]),
+                "low": f(part[4]),
+                "volume": f(part[5]),
+                "amount": None,
+                "pct": pct_value,
+                "turnover": None,
+            }
+        )
+        previous_close = close
+    return rows
+
+
 def fetch_trends(code: str, ndays: int = 1) -> list[dict]:
+    if ndays == 1:
+        try:
+            rows = fetch_trends_tencent(code)
+            if rows:
+                return rows
+        except Exception as exc:
+            print(f"Tencent trends failed for {code}: {exc}; fallback to Eastmoney", file=sys.stderr)
+    try:
+        rows = fetch_trends_eastmoney(code, ndays)
+        if rows:
+            return rows
+    except Exception as exc:
+        print(f"Eastmoney trends failed for {code}: {exc}; fallback to Tencent", file=sys.stderr)
+    if ndays != 1:
+        return []
+    return fetch_trends_tencent(code)
+
+
+def fetch_trends_eastmoney(code: str, ndays: int = 1) -> list[dict]:
     params = {
         "secid": secid(code),
         "fields1": "f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13",
@@ -596,6 +661,49 @@ def fetch_trends(code: str, ndays: int = 1) -> list[dict]:
                 "avg_price": f(part[7]),
             }
         )
+    return rows
+
+
+def fetch_trends_tencent(code: str) -> list[dict]:
+    symbol = tencent_symbol(code)
+    url = f"https://web.ifzq.gtimg.cn/appstock/app/minute/query?code={symbol}"
+    req = urllib.request.Request(url, headers={"User-Agent": HEADERS["User-Agent"], "Referer": "https://gu.qq.com/"})
+    with urllib.request.urlopen(req, timeout=12) as response:
+        data = json.loads(response.read().decode("utf-8", errors="replace"))
+    payload = (((data.get("data") or {}).get(symbol) or {}).get("data") or {})
+    lines = payload.get("data") or []
+    rows = []
+    date_text = today()
+    previous_amount = 0.0
+    previous_volume = 0.0
+    for line in lines:
+        part = line.split()
+        if len(part) < 4:
+            continue
+        hhmm = part[0]
+        try:
+            ts = dt.datetime.strptime(f"{date_text} {hhmm}", "%Y-%m-%d %H%M").replace(tzinfo=TZ)
+        except ValueError:
+            continue
+        close = f(part[1])
+        cum_volume = f(part[2]) or previous_volume
+        cum_amount = f(part[3]) or previous_amount
+        minute_amount = max(0.0, cum_amount - previous_amount)
+        avg_price = cum_amount / (cum_volume * 100) if cum_volume else close
+        rows.append(
+            {
+                "time": ts,
+                "open": close,
+                "close": close,
+                "high": close,
+                "low": close,
+                "volume": max(0.0, cum_volume - previous_volume),
+                "amount": minute_amount,
+                "avg_price": avg_price,
+            }
+        )
+        previous_volume = cum_volume
+        previous_amount = cum_amount
     return rows
 
 
