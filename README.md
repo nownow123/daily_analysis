@@ -24,6 +24,22 @@ Locally:
 python3 a_share_tail_picker/cloud_tail_picker.py daily --top 30 --max-detail 160 --workers 8
 ```
 
+## Historical Backtest
+
+Replay the current tail-session strategy over a historical window:
+
+```bash
+python3 a_share_tail_picker/backtest_tail_strategy.py --start 2026-06-01 --end 2026-07-02 --top 5 --workers 16
+```
+
+Backtest outputs are written under:
+
+- `a_share_tail_picker/backtests/YYYY-MM-DD_to_YYYY-MM-DD/backtest_summary_*.md`
+- `a_share_tail_picker/backtests/YYYY-MM-DD_to_YYYY-MM-DD/backtest_trades_*.csv`
+- `a_share_tail_picker/backtests/YYYY-MM-DD_to_YYYY-MM-DD/backtest_daily_*.csv`
+
+Backtest data uses the current active A-share universe, Tencent daily kline with Yahoo daily fallback, and Yahoo 5-minute bars for candidate 14:45 snapshots and next-day 10:00 evaluation. Because public APIs do not provide a complete historical full-market 14:45 snapshot, turnover, amount, and volume ratio are approximate in backtests.
+
 ## Schedule
 
 GitHub Actions cron uses UTC:

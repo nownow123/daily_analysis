@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 .DS_Store
 .pytest_cache/
+a_share_tail_picker/data_cache/
