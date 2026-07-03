@@ -309,6 +309,31 @@ def normalize_efinance(row: dict) -> dict:
     }
 
 
+def normalize_tencent(parts: list[str]) -> dict:
+    code = str(parts[2]).strip()
+    price = f(parts[3])
+    high = f(parts[33])
+    low = f(parts[34])
+    return {
+        "code": code,
+        "name": str(parts[1]).strip(),
+        "board": board(code),
+        "stock_url": stock_url(code),
+        "price": price,
+        "pct": f(parts[32]),
+        "amount": (f(parts[37]) or 0) * 10000,
+        "turnover": f(parts[38]),
+        "volume_ratio": f(parts[49]),
+        "high": high,
+        "low": low,
+        "open": f(parts[5]),
+        "preclose": f(parts[4]),
+        "float_mv": (f(parts[45]) or 0) * 100000000,
+        "industry": board(code),
+        "day_range_pos": range_pos(price, high, low),
+    }
+
+
 def clean_spot(stocks: list[dict]) -> list[dict]:
     clean = []
     seen = set()
@@ -337,6 +362,47 @@ def fetch_spot_efinance() -> list[dict]:
     if not clean:
         raise MarketDataError("efinance returned no usable A-share rows")
     print(f"spot source: efinance rows={len(clean)}", file=sys.stderr)
+    return clean
+
+
+def generated_a_share_symbols() -> list[str]:
+    ranges = [
+        ("sz", 1, 3999),
+        ("sz", 300000, 301999),
+        ("sh", 600000, 605999),
+        ("sh", 688000, 689999),
+    ]
+    symbols = []
+    for prefix, start, end in ranges:
+        for code in range(start, end + 1):
+            symbols.append(f"{prefix}{code:06d}")
+    return symbols
+
+
+def fetch_spot_tencent(batch_size: int = 260) -> list[dict]:
+    symbols = generated_a_share_symbols()
+    stocks = []
+    for index in range(0, len(symbols), batch_size):
+        batch = symbols[index : index + batch_size]
+        url = "https://qt.gtimg.cn/q=" + ",".join(batch)
+        req = urllib.request.Request(url, headers={"User-Agent": HEADERS["User-Agent"]})
+        with urllib.request.urlopen(req, timeout=12) as response:
+            text = response.read().decode("gbk", errors="replace")
+        for line in text.splitlines():
+            if '="' not in line:
+                continue
+            payload = line.split('="', 1)[1].rsplit('";', 1)[0]
+            parts = payload.split("~")
+            if len(parts) < 62 or not parts[1].strip() or f(parts[3]) in (None, 0):
+                continue
+            if "A" not in parts[60]:
+                continue
+            stocks.append(normalize_tencent(parts))
+        time.sleep(0.08)
+    clean = clean_spot(stocks)
+    if not clean:
+        raise MarketDataError("Tencent quote API returned no usable A-share rows")
+    print(f"spot source: tencent rows={len(clean)}", file=sys.stderr)
     return clean
 
 
@@ -401,7 +467,11 @@ def fetch_spot() -> list[dict]:
     except ImportError:
         print("efinance is not installed; fallback to raw Eastmoney API", file=sys.stderr)
     except Exception as exc:
-        print(f"efinance spot fetch failed: {exc}; fallback to raw Eastmoney API", file=sys.stderr)
+        print(f"efinance spot fetch failed: {exc}; fallback to Tencent quote API", file=sys.stderr)
+    try:
+        return fetch_spot_tencent()
+    except Exception as exc:
+        print(f"Tencent spot fetch failed: {exc}; fallback to raw Eastmoney API", file=sys.stderr)
     return fetch_spot_eastmoney()
 
 
