@@ -1,6 +1,6 @@
 efinance is not installed; fallback to Tencent quote API
 spot source: tencent rows=4996
-LEARNING_REPORT=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/learning/learning_report_20260703_173337.md
-CANDIDATES_CSV=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-03/candidates_20260703_173431.csv
-REPORT=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-03/report_20260703_173431.md
-WECHAT_SUMMARY=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-03/wechat_summary_20260703_173431.md
+LEARNING_REPORT=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/learning/learning_report_20260703_174922.md
+CANDIDATES_CSV=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-03/candidates_20260703_175017.csv
+REPORT=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-03/report_20260703_175017.md
+WECHAT_SUMMARY=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-03/wechat_summary_20260703_175017.md
