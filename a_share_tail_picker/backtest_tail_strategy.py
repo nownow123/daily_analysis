@@ -40,6 +40,7 @@ CACHE_DIR = ROOT / "data_cache"
 DAILY_CACHE_DIR = CACHE_DIR / "tencent_daily"
 YAHOO_DAILY_CACHE_DIR = CACHE_DIR / "yahoo_daily"
 MINUTE_CACHE_DIR = CACHE_DIR / "yahoo_5m"
+TENCENT_MINUTE_CACHE_DIR = CACHE_DIR / "tencent_5m"
 BACKTEST_DIR = ROOT / "backtests"
 TZ = ZoneInfo("Asia/Shanghai")
 YAHOO_HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
@@ -294,30 +295,129 @@ def fetch_minute_yahoo_cached(code: str, start: dt.date, end: dt.date, refresh: 
     return rows
 
 
+def fetch_minute_tencent_chunk(code: str, end_marker: str) -> list[dict]:
+    symbol = picker.tencent_symbol(code)
+    url = f"https://ifzq.gtimg.cn/appstock/app/kline/mkline?param={symbol},m5,{end_marker},320"
+    req = urllib.request.Request(url, headers={"User-Agent": YAHOO_HEADERS["User-Agent"], "Referer": "https://gu.qq.com/"})
+    with urllib.request.urlopen(req, timeout=18) as response:
+        data = json.loads(response.read().decode("utf-8", errors="replace"))
+    payload = ((data.get("data") or {}).get(symbol) or {})
+    raw_rows = payload.get("m5") or []
+    rows = []
+    for part in raw_rows:
+        if len(part) < 6:
+            continue
+        try:
+            ts = dt.datetime.strptime(part[0], "%Y%m%d%H%M").replace(tzinfo=TZ)
+        except ValueError:
+            continue
+        close = safe_float(part[2])
+        if close is None:
+            continue
+        volume_shares = (safe_float(part[5]) or 0.0) * 100
+        rows.append(
+            {
+                "time": ts.strftime("%Y-%m-%d %H:%M:%S"),
+                "open": safe_float(part[1]) or close,
+                "high": safe_float(part[3]) or close,
+                "low": safe_float(part[4]) or close,
+                "close": close,
+                "volume": volume_shares,
+                "amount": volume_shares * close,
+                "source": "tencent_m5",
+            }
+        )
+    return rows
+
+
+def fetch_minute_tencent_cached(code: str, start: dt.date, end: dt.date, refresh: bool = False) -> list[dict]:
+    if end < start:
+        return []
+    TENCENT_MINUTE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    key = f"{code}_{start.strftime('%Y%m%d')}_{end.strftime('%Y%m%d')}.json"
+    path = TENCENT_MINUTE_CACHE_DIR / key
+    if path.exists() and not refresh:
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    collected: dict[str, dict] = {}
+    marker_date = end + dt.timedelta(days=1)
+    end_marker = marker_date.strftime("%Y%m%d0000")
+    previous_first = ""
+    for _ in range(40):
+        chunk = fetch_minute_tencent_chunk(code, end_marker)
+        if not chunk:
+            break
+        first_time = chunk[0]["time"]
+        if first_time == previous_first:
+            break
+        previous_first = first_time
+        for row in chunk:
+            row_day = row["time"][:10]
+            if start.strftime("%Y-%m-%d") <= row_day <= end.strftime("%Y-%m-%d"):
+                collected[row["time"]] = row
+        first_dt = dt.datetime.strptime(first_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ)
+        if first_dt.date() <= start:
+            break
+        end_marker = first_dt.strftime("%Y%m%d%H%M")
+        time.sleep(0.05)
+
+    rows = [collected[key] for key in sorted(collected)]
+    path.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+    return rows
+
+
 class MinuteStore:
     def __init__(self, start: dt.date, end: dt.date, refresh: bool = False) -> None:
         self.start = start
         self.end = end
         self.refresh = refresh
-        self.cache: dict[str, list[dict]] = {}
+        self.recent_start = max(start, dt.datetime.now(TZ).date() - dt.timedelta(days=59))
+        self.recent_cache: dict[str, list[dict]] = {}
+        self.older_cache: dict[str, list[dict]] = {}
         self.failures: dict[str, str] = {}
 
-    def rows(self, code: str) -> list[dict]:
-        if code in self.cache:
-            return self.cache[code]
-        if code in self.failures:
+    def recent_rows(self, code: str) -> list[dict]:
+        if code in self.recent_cache:
+            return self.recent_cache[code]
+        key = f"recent:{code}"
+        if key in self.failures:
             return []
         try:
-            rows = fetch_minute_yahoo_cached(code, self.start, self.end, self.refresh)
-            self.cache[code] = rows
+            rows = fetch_minute_yahoo_cached(code, self.recent_start, self.end, self.refresh)
+            self.recent_cache[code] = rows
             return rows
         except Exception as exc:
-            self.failures[code] = str(exc)
+            try:
+                rows = fetch_minute_tencent_cached(code, self.recent_start, self.end, self.refresh)
+                self.recent_cache[code] = rows
+                return rows
+            except Exception as fallback_exc:
+                self.failures[key] = f"yahoo: {exc}; tencent: {fallback_exc}"
+                return []
+
+    def older_rows(self, code: str) -> list[dict]:
+        if code in self.older_cache:
+            return self.older_cache[code]
+        key = f"older:{code}"
+        if key in self.failures:
+            return []
+        try:
+            older_end = min(self.end, self.recent_start - dt.timedelta(days=1))
+            rows = fetch_minute_tencent_cached(code, self.start, older_end, self.refresh)
+            self.older_cache[code] = rows
+            return rows
+        except Exception as exc:
+            self.failures[key] = str(exc)
             return []
 
     def rows_for_date(self, code: str, day: str, until: dt.time | None = None) -> list[dict]:
+        day_date = parse_date(day)
+        source_rows = self.recent_rows(code) if day_date >= self.recent_start else self.older_rows(code)
         rows = []
-        for raw in self.rows(code):
+        for raw in source_rows:
             ts = dt.datetime.strptime(raw["time"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ)
             if ts.strftime("%Y-%m-%d") != day:
                 continue
@@ -621,7 +721,7 @@ def write_report(
         "",
         "## 重要口径",
         "",
-        "- 全市场初筛使用历史日K和当前流通股本近似，进入候选池后使用 Yahoo 5分钟数据还原 14:45。",
+        "- 全市场初筛使用历史日K和当前流通股本近似，进入候选池后使用 Yahoo 5分钟线和腾讯历史5分钟线还原 14:45。",
         "- 因公开接口没有完整历史全市场 14:45 快照，换手、成交额和量比存在近似；报告已保留 `data_quality` 字段。",
         "- 当前活跃股票池会带来轻微幸存者偏差，退市或长期停牌股票不在样本内。",
         "- 本报告只做策略复盘和研究，不构成买卖指令。",

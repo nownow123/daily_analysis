@@ -38,7 +38,7 @@ Backtest outputs are written under:
 - `a_share_tail_picker/backtests/YYYY-MM-DD_to_YYYY-MM-DD/backtest_trades_*.csv`
 - `a_share_tail_picker/backtests/YYYY-MM-DD_to_YYYY-MM-DD/backtest_daily_*.csv`
 
-Backtest data uses the current active A-share universe, Tencent daily kline with Yahoo daily fallback, and Yahoo 5-minute bars for candidate 14:45 snapshots and next-day 10:00 evaluation. Because public APIs do not provide a complete historical full-market 14:45 snapshot, turnover, amount, and volume ratio are approximate in backtests.
+Backtest data uses the current active A-share universe, Tencent daily kline with Yahoo daily fallback, and Yahoo/Tencent 5-minute bars for candidate 14:45 snapshots and next-day 10:00 evaluation. Because public APIs do not provide a complete historical full-market 14:45 snapshot, turnover, amount, and volume ratio are approximate in backtests.
 
 ## Schedule
 
