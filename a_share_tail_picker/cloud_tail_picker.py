@@ -98,8 +98,22 @@ SAMPLE_FIELDS = [
     "risk_score",
     "strategy_score",
     "strategy_penalty",
+    "sector_lifecycle",
     "tail_heat_limit",
     "tail_heat_level",
+    "avg_range5",
+    "bias_ma5_range_ratio",
+    "bias_ma5_percentile60",
+    "return_3d",
+    "return_5d",
+    "ma20_slope",
+    "vwap_support_ratio",
+    "late_vwap_support_ratio",
+    "vwap_deviation",
+    "late_amount_ratio",
+    "late_up_amount_ratio",
+    "max_tail_5m_return",
+    "tail_slope",
     "pct",
     "price",
     "volume_ratio",
@@ -238,6 +252,29 @@ def range_pos(price, high, low):
     if price is None or high is None or low is None or high <= low:
         return None
     return (price - low) / (high - low)
+
+
+def range_pct(high, low):
+    high = f(high)
+    low = f(low)
+    if high is None or low in (None, 0) or high <= low:
+        return None
+    return (high / low - 1) * 100
+
+
+def max_window_return(rows: list[dict], minutes: int) -> float | None:
+    best = None
+    valid = [row for row in rows if row.get("time") and f(row.get("close")) is not None]
+    for start_index, start_row in enumerate(valid):
+        start_price = f(start_row.get("close"))
+        start_time = start_row["time"]
+        for end_row in valid[start_index + 1 :]:
+            if (end_row["time"] - start_time).total_seconds() > minutes * 60:
+                break
+            value = pct(end_row.get("close"), start_price)
+            if value is not None:
+                best = value if best is None else max(best, value)
+    return best
 
 
 def secid(code: str) -> str:
@@ -589,6 +626,26 @@ def score_sector(stat: dict | None) -> int:
     return min(score, 20)
 
 
+def sector_lifecycle(stat: dict | None, market: dict) -> str:
+    if not stat:
+        return "未分类"
+    avg_pct = f(stat.get("avg_pct")) or 0
+    adv_ratio = f(stat.get("adv_ratio")) or 0
+    strong = f(stat.get("strong_count")) or 0
+    rank = int(stat.get("rank") or 99)
+    if market.get("market_light_status") == "red" or avg_pct <= 0 or adv_ratio < 0.45:
+        return "退潮"
+    if avg_pct >= 4.5 and adv_ratio >= 0.8 and strong >= 8:
+        return "高潮"
+    if rank <= 5 and avg_pct >= 2 and adv_ratio >= 0.6 and strong >= 3:
+        return "发酵"
+    if rank <= 10 and avg_pct >= 1 and strong >= 1:
+        return "启动"
+    if avg_pct >= 0.5 and adv_ratio >= 0.5:
+        return "分歧"
+    return "退潮"
+
+
 def fetch_kline(code: str) -> list[dict]:
     try:
         rows = fetch_kline_tencent(code)
@@ -800,18 +857,40 @@ def score_trend(stock: dict, kline: list[dict]) -> tuple[int, list[str], dict]:
     detail = {}
     closes = [row["close"] for row in kline if row["close"] is not None]
     volumes = [row["volume"] for row in kline if row["volume"] is not None]
+    ranges = [range_pct(row.get("high"), row.get("low")) for row in kline]
+    ranges = [value for value in ranges if value is not None]
     price = stock["price"]
     if len(closes) < 20 or price is None:
         return 5, ["日K数据不足"], detail
     ma5, ma10, ma20 = mean(closes[-5:]), mean(closes[-10:]), mean(closes[-20:])
+    avg_range5 = mean(ranges[-5:]) if len(ranges) >= 5 else None
+    bias_ma5 = pct(price, ma5)
+    bias_ma5_range_ratio = abs(bias_ma5) / avg_range5 if bias_ma5 is not None and avg_range5 not in (None, 0) else None
+    historical_biases = []
+    for index in range(4, len(closes)):
+        hist_ma5 = mean(closes[index - 4 : index + 1])
+        hist_bias = pct(closes[index], hist_ma5)
+        if hist_bias is not None:
+            historical_biases.append(abs(hist_bias))
+    bias_percentile = None
+    if len(historical_biases) >= 20 and bias_ma5 is not None:
+        current_abs = abs(bias_ma5)
+        bias_percentile = sum(1 for value in historical_biases[-60:] if value <= current_abs) / len(historical_biases[-60:])
+    ma20_previous = mean(closes[-25:-5]) if len(closes) >= 25 else None
     detail.update(
         {
             "ma5": ma5,
             "ma10": ma10,
             "ma20": ma20,
-            "bias_ma5": pct(price, ma5),
+            "bias_ma5": bias_ma5,
             "bias_ma10": pct(price, ma10),
             "bias_ma20": pct(price, ma20),
+            "avg_range5": avg_range5,
+            "bias_ma5_range_ratio": bias_ma5_range_ratio,
+            "bias_ma5_percentile60": bias_percentile,
+            "return_3d": pct(price, closes[-3]) if len(closes) >= 3 else None,
+            "return_5d": pct(price, closes[-5]) if len(closes) >= 5 else None,
+            "ma20_slope": pct(ma20, ma20_previous),
         }
     )
     score = 0
@@ -827,16 +906,26 @@ def score_trend(stock: dict, kline: list[dict]) -> tuple[int, list[str], dict]:
         flags.append("短均线结构不强")
     bias_ma5 = f(detail.get("bias_ma5"))
     if bias_ma5 is not None:
-        if -3 <= bias_ma5 <= 5:
+        if bias_ma5_range_ratio is not None and bias_ma5_range_ratio <= 0.8 and -3 <= bias_ma5 <= 5:
             score += 2
+        elif bias_ma5_range_ratio is not None and bias_ma5_range_ratio > 1.4:
+            flags.append("MA5动态乖离过热")
+        elif bias_ma5_range_ratio is not None and bias_ma5_range_ratio > 1.1:
+            flags.append("MA5动态乖离偏高")
         elif 5 < bias_ma5 <= 7:
-            flags.append("MA5乖离率偏高")
-        elif 7 < bias_ma5 <= 10:
-            flags.append("MA5乖离率过高")
+            flags.append("MA5固定乖离偏高")
         elif bias_ma5 > 10:
             flags.append("MA5乖离率超过10%")
         elif bias_ma5 < -3:
             flags.append("跌破MA5过深")
+        if bias_percentile is not None and bias_percentile >= 0.85 and bias_ma5 > 5:
+            flags.append("MA5乖离处于60日高分位")
+    if f(detail.get("return_3d")) is not None and f(detail["return_3d"]) > 12:
+        flags.append("近3日涨幅过大")
+    if f(detail.get("return_5d")) is not None and f(detail["return_5d"]) > 20:
+        flags.append("近5日涨幅过大")
+    if f(detail.get("ma20_slope")) is not None and f(detail["ma20_slope"]) <= 0:
+        flags.append("MA20斜率不强")
     if len(volumes) >= 6 and mean(volumes[-6:-1]):
         vol_ratio = volumes[-1] / mean(volumes[-6:-1])
         detail["vol_vs_ma5"] = vol_ratio
@@ -865,6 +954,27 @@ def score_intraday(stock: dict, trends: list[dict]) -> tuple[int, list[str], dic
         return 8, [f"当前分时到{detail['last_time']}，尚未进入14:30尾盘窗口"], detail
     late = [row for row in trends if row["time"] >= cutoff]
     late_start = late[0].get("close") or late[0].get("open")
+    vwap_rows = [row for row in trends if f(row.get("close")) is not None and f(row.get("avg_price")) not in (None, 0)]
+    late_vwap_rows = [row for row in late if f(row.get("close")) is not None and f(row.get("avg_price")) not in (None, 0)]
+    if vwap_rows:
+        detail["vwap_support_ratio"] = sum(1 for row in vwap_rows if f(row.get("close")) >= f(row.get("avg_price"))) / len(vwap_rows)
+    if late_vwap_rows:
+        detail["late_vwap_support_ratio"] = sum(1 for row in late_vwap_rows if f(row.get("close")) >= f(row.get("avg_price"))) / len(late_vwap_rows)
+    if last_price and f(last.get("avg_price")):
+        detail["vwap_deviation"] = pct(last_price, last.get("avg_price"))
+    total_amount = sum(f(row.get("amount")) or 0.0 for row in trends)
+    late_amount = sum(f(row.get("amount")) or 0.0 for row in late)
+    detail["late_amount_ratio"] = late_amount / total_amount if total_amount else None
+    up_amount = 0.0
+    for index, row in enumerate(late):
+        if index == 0:
+            continue
+        current = f(row.get("close"))
+        previous = f(late[index - 1].get("close"))
+        if current is not None and previous is not None and current >= previous:
+            up_amount += f(row.get("amount")) or 0.0
+    detail["late_up_amount_ratio"] = up_amount / late_amount if late_amount else None
+    detail["max_tail_5m_return"] = max_window_return(late, 5)
     score = 0
     if last_price and last.get("avg_price") and last_price >= last["avg_price"]:
         score += 6
@@ -872,9 +982,40 @@ def score_intraday(stock: dict, trends: list[dict]) -> tuple[int, list[str], dic
         flags.append("分时未站上均价线")
     late_return = pct(last_price, late_start)
     detail["late_return"] = late_return
+    late_minutes = max(1.0, (last["time"] - cutoff).total_seconds() / 60)
+    detail["tail_slope"] = late_return / late_minutes if late_return is not None else None
     score += 4 if late_return is not None and late_return >= 0.8 else 3 if late_return is not None and late_return >= 0 else 1 if late_return is not None and late_return >= -0.5 else 0
     if late_return is not None and late_return < -0.5:
         flags.append("14:30后走弱")
+    if f(detail.get("vwap_support_ratio")) is not None:
+        if detail["vwap_support_ratio"] >= 0.6:
+            score += 2
+        else:
+            flags.append("全天VWAP承接不足")
+    if f(detail.get("late_vwap_support_ratio")) is not None:
+        if detail["late_vwap_support_ratio"] >= 0.75:
+            score += 2
+        else:
+            flags.append("尾盘VWAP承接不足")
+    if f(detail.get("vwap_deviation")) is not None:
+        if 0 <= detail["vwap_deviation"] <= 3:
+            score += 2
+        elif detail["vwap_deviation"] > 5:
+            flags.append("收盘远离VWAP")
+        elif detail["vwap_deviation"] > 3:
+            flags.append("VWAP偏离偏高")
+    if f(detail.get("late_amount_ratio")) is not None:
+        if 0.04 <= detail["late_amount_ratio"] <= 0.22:
+            score += 1
+        elif detail["late_amount_ratio"] > 0.3:
+            flags.append("尾盘成交占比过高")
+    if f(detail.get("late_up_amount_ratio")) is not None and detail["late_up_amount_ratio"] < 0.45 and late_return is not None and late_return > 0:
+        flags.append("尾盘上行成交质量不足")
+    if f(detail.get("max_tail_5m_return")) is not None:
+        if detail["max_tail_5m_return"] > 1.2:
+            flags.append("尾盘5分钟脉冲急拉")
+        elif detail["max_tail_5m_return"] > 0.8:
+            flags.append("尾盘短时拉升偏快")
     highs = [row["high"] for row in trends if row["high"] is not None]
     lows = [row["low"] for row in trends if row["low"] is not None]
     if highs and lows and max(highs) > min(lows) and last_price:
@@ -916,7 +1057,7 @@ def adaptive_penalty(flags: list[str], rules: dict) -> tuple[int, list[str]]:
 
 
 def risk_score(flags: list[str]) -> int:
-    high = ["ST", "退市", "流通市值不适合", "成交额不足", "最后5分钟急拉"]
+    high = ["ST", "退市", "流通市值不适合", "成交额不足", "最后5分钟急拉", "尾盘5分钟脉冲急拉", "收盘远离VWAP", "板块退潮"]
     score = 10
     for flag in flags:
         score -= 3 if any(x in flag for x in high) else 1
@@ -941,6 +1082,10 @@ def tail_heat_level(row: dict) -> str:
         return "未知"
     if late_return < 0:
         return "走弱"
+    if f(row.get("max_tail_5m_return")) is not None and f(row.get("max_tail_5m_return")) > 1.2:
+        return "脉冲"
+    if f(row.get("vwap_deviation")) is not None and f(row.get("vwap_deviation")) > 5:
+        return "远离VWAP"
     limit = f(row.get("tail_heat_limit")) or tail_heat_limit(row)
     if late_return < 0.2:
         return "温和"
@@ -951,19 +1096,31 @@ def tail_heat_level(row: dict) -> str:
     return "过热"
 
 
-def score_strategy_overlay(stock: dict, detail: dict, i_detail: dict, sector_stat: dict | None, market: dict) -> tuple[int, int, list[str], list[str], float | None]:
+def score_strategy_overlay(
+    stock: dict,
+    detail: dict,
+    i_detail: dict,
+    sector_stat: dict | None,
+    market: dict,
+    lifecycle: str,
+) -> tuple[int, int, list[str], list[str], float | None]:
     score = 0
     penalty = 0
     tags: list[str] = []
     flags: list[str] = []
     bias_ma5 = f(detail.get("bias_ma5"))
+    bias_ratio = f(detail.get("bias_ma5_range_ratio"))
+    bias_percentile = f(detail.get("bias_ma5_percentile60"))
     if bias_ma5 is not None:
-        if -3 <= bias_ma5 <= 5:
+        if bias_ratio is not None and bias_ratio <= 0.8 and -3 <= bias_ma5 <= 5:
             score += 3
-            tags.append("MA5乖离健康")
-        elif 5 < bias_ma5 <= 7:
+            tags.append("动态乖离健康")
+        elif bias_ratio is not None and bias_ratio > 1.4:
+            penalty += 5
+            flags.append("MA5动态乖离过热")
+        elif bias_ratio is not None and bias_ratio > 1.1:
             penalty += 1
-            flags.append("MA5乖离率偏高")
+            flags.append("MA5动态乖离偏高")
         elif 7 < bias_ma5 <= 10:
             penalty += 3
             flags.append("MA5乖离率过高")
@@ -973,10 +1130,24 @@ def score_strategy_overlay(stock: dict, detail: dict, i_detail: dict, sector_sta
         elif bias_ma5 < -3:
             penalty += 2
             flags.append("跌破MA5过深")
+        if bias_percentile is not None and bias_percentile >= 0.85 and bias_ma5 > 5:
+            penalty += 2
+            flags.append("MA5乖离高分位")
+
+    if f(detail.get("return_3d")) is not None and detail["return_3d"] > 12:
+        penalty += 3
+        flags.append("近3日涨幅过大")
+    if f(detail.get("return_5d")) is not None and detail["return_5d"] > 20:
+        penalty += 4
+        flags.append("近5日涨幅过大")
+    if f(detail.get("ma20_slope")) is not None and detail["ma20_slope"] > 0:
+        score += 1
+        tags.append("MA20斜率向上")
 
     late_return = f(i_detail.get("late_return"))
     if late_return is not None:
-        heat_limit = tail_heat_limit({**stock, **detail, **i_detail})
+        merged = {**stock, **detail, **i_detail}
+        heat_limit = tail_heat_limit(merged)
         if 0 <= late_return < 0.2:
             score += 3
             tags.append("尾盘温和走强")
@@ -989,6 +1160,44 @@ def score_strategy_overlay(stock: dict, detail: dict, i_detail: dict, sector_sta
         elif late_return >= 2:
             penalty += 6
             flags.append("14:30后涨幅过大")
+    if f(i_detail.get("vwap_support_ratio")) is not None:
+        if i_detail["vwap_support_ratio"] >= 0.6:
+            score += 2
+            tags.append("VWAP全天承接")
+        else:
+            penalty += 3
+            flags.append("全天VWAP承接不足")
+    if f(i_detail.get("late_vwap_support_ratio")) is not None:
+        if i_detail["late_vwap_support_ratio"] >= 0.75:
+            score += 2
+            tags.append("尾盘VWAP承接")
+        else:
+            penalty += 3
+            flags.append("尾盘VWAP承接不足")
+    if f(i_detail.get("vwap_deviation")) is not None:
+        if i_detail["vwap_deviation"] > 5:
+            penalty += 6
+            flags.append("收盘远离VWAP")
+        elif i_detail["vwap_deviation"] > 3:
+            penalty += 3
+            flags.append("VWAP偏离偏高")
+    if f(i_detail.get("late_amount_ratio")) is not None:
+        if i_detail["late_amount_ratio"] > 0.3:
+            penalty += 4
+            flags.append("尾盘成交占比过高")
+        elif 0.04 <= i_detail["late_amount_ratio"] <= 0.22:
+            score += 1
+            tags.append("尾盘成交占比健康")
+    if f(i_detail.get("max_tail_5m_return")) is not None:
+        if i_detail["max_tail_5m_return"] > 1.2:
+            penalty += 7
+            flags.append("尾盘5分钟脉冲急拉")
+        elif i_detail["max_tail_5m_return"] > 0.8:
+            penalty += 3
+            flags.append("尾盘短时拉升偏快")
+    if f(i_detail.get("late_up_amount_ratio")) is not None and i_detail["late_up_amount_ratio"] >= 0.55:
+        score += 1
+        tags.append("尾盘上行成交占优")
 
     turnover = f(stock.get("turnover"))
     if turnover is not None:
@@ -1024,8 +1233,23 @@ def score_strategy_overlay(stock: dict, detail: dict, i_detail: dict, sector_sta
     elif light_status == "red":
         penalty += 5
         flags.append("市场红灯")
+    if lifecycle == "发酵":
+        score += 3
+        tags.append("板块发酵")
+    elif lifecycle == "启动":
+        score += 2
+        tags.append("板块启动")
+    elif lifecycle == "高潮":
+        penalty += 5
+        flags.append("板块高潮")
+    elif lifecycle == "退潮":
+        penalty += 8
+        flags.append("板块退潮")
+    elif lifecycle == "分歧":
+        penalty += 2
+        flags.append("板块分歧")
 
-    return min(score, 10), min(penalty, 12), tags, flags, relative_strength
+    return min(score, 14), min(penalty, 20), tags, flags, relative_strength
 
 
 def candidate_tier(row: dict, focus_min: int) -> str:
@@ -1037,12 +1261,28 @@ def candidate_tier(row: dict, focus_min: int) -> str:
     light_status = row.get("market_light_status")
     heat_limit = f(row.get("tail_heat_limit")) or tail_heat_limit(row)
     market_score = f(row.get("market_score")) or 0
+    lifecycle = row.get("sector_lifecycle")
+    tail_level = row.get("tail_heat_level")
+    bias_ratio = f(row.get("bias_ma5_range_ratio"))
+    bias_percentile = f(row.get("bias_ma5_percentile60"))
+    vwap_support = f(row.get("vwap_support_ratio"))
+    late_vwap_support = f(row.get("late_vwap_support_ratio"))
+    vwap_deviation = f(row.get("vwap_deviation"))
+    max_tail_5m = f(row.get("max_tail_5m_return"))
     if (
         score >= max(98, focus_min)
         and market_score >= 16
         and late_return is not None
         and 0 <= late_return < heat_limit
         and (bias_ma5 is None or bias_ma5 <= 7)
+        and (bias_ratio is None or bias_ratio <= 1.1)
+        and (bias_ma5 is None or bias_ma5 <= 5 or bias_percentile is None or bias_percentile < 0.85)
+        and lifecycle in {"启动", "发酵"}
+        and tail_level in {"温和", "可接受"}
+        and (vwap_support is None or vwap_support >= 0.6)
+        and (late_vwap_support is None or late_vwap_support >= 0.75)
+        and (vwap_deviation is None or vwap_deviation <= 3)
+        and (max_tail_5m is None or max_tail_5m <= 0.8)
         and light_status == "green"
     ):
         return "主推荐"
@@ -1051,6 +1291,9 @@ def candidate_tier(row: dict, focus_min: int) -> str:
         and late_return is not None
         and 0 <= late_return < 2
         and (bias_ma5 is None or bias_ma5 <= 7)
+        and lifecycle not in {"退潮"}
+        and tail_level not in {"脉冲", "远离VWAP", "过热"}
+        and (vwap_deviation is None or vwap_deviation <= 5)
         and light_status != "red"
     ):
         return "核心候选"
@@ -1070,6 +1313,8 @@ def strict_short_blockers(row: dict, focus_min: int) -> list[str]:
         blockers.append("市场环境逆风")
     if row.get("market_light_status") == "red":
         blockers.append("市场红灯")
+    if row.get("sector_lifecycle") == "退潮":
+        blockers.append("板块退潮")
     if (f(row.get("score")) or 0) < focus_min:
         blockers.append(f"总分低于{focus_min}")
     if dual:
@@ -1096,6 +1341,8 @@ def strict_short_blockers(row: dict, focus_min: int) -> list[str]:
         blockers.append("14:30后未走强")
     if f(row.get("bias_ma5")) is not None and f(row.get("bias_ma5")) > 10:
         blockers.append("MA5乖离率超过10%")
+    if f(row.get("bias_ma5_range_ratio")) is not None and f(row.get("bias_ma5_range_ratio")) > 1.4:
+        blockers.append("MA5动态乖离过热")
     if f(row.get("trend_score")) is None or f(row.get("trend_score")) < 10:
         blockers.append("日K结构不够强")
     if f(row.get("intraday_score")) is None or f(row.get("intraday_score")) < 14:
@@ -1117,6 +1364,10 @@ def strict_short_blockers(row: dict, focus_min: int) -> list[str]:
         "最后5分钟急拉",
         "市场红灯",
         "MA5乖离率超过10%",
+        "MA5动态乖离过热",
+        "尾盘5分钟脉冲急拉",
+        "收盘远离VWAP",
+        "板块退潮",
     ]
     for keyword in hard_bad:
         if keyword in flags:
@@ -1130,14 +1381,20 @@ def concise_reason(row: dict) -> str:
         parts.append(row["candidate_tier"])
     if row.get("sector_rank"):
         parts.append(f"板块第{row['sector_rank']}")
+    if row.get("sector_lifecycle"):
+        parts.append(f"板块{row['sector_lifecycle']}")
     if f(row.get("relative_strength")) is not None:
         parts.append(f"跑赢板块{fmt_pct(row['relative_strength'])}")
     if f(row.get("bias_ma5")) is not None:
         parts.append(f"MA5乖离{fmt_pct(row['bias_ma5'])}")
+    if f(row.get("bias_ma5_range_ratio")) is not None:
+        parts.append(f"动态乖离{fmt_num(row['bias_ma5_range_ratio'])}倍")
     if f(row.get("late_return")) is not None:
         parts.append(f"14:30后{fmt_pct(row['late_return'])}")
     if row.get("tail_heat_level"):
         parts.append(f"尾盘{row['tail_heat_level']}")
+    if f(row.get("vwap_deviation")) is not None:
+        parts.append(f"VWAP偏离{fmt_pct(row['vwap_deviation'])}")
     if f(row.get("intraday_range_pos")) is not None:
         parts.append(f"分时位置{f(row['intraday_range_pos']) * 100:.0f}%")
     if f(row.get("day_range_pos")) is not None:
@@ -1171,13 +1428,14 @@ def analyze_one(stock: dict, sector_by_name: dict, market: dict, rules: dict) ->
     flags.extend(i_flags)
     sector_stat = sector_by_name.get(stock["industry"])
     sector = score_sector(sector_stat)
-    strategy_score, strategy_penalty, strategy_tags, strategy_flags, relative_strength = score_strategy_overlay(stock, detail, i_detail, sector_stat, market)
+    lifecycle = sector_lifecycle(sector_stat, market)
+    strategy_score, strategy_penalty, strategy_tags, strategy_flags, relative_strength = score_strategy_overlay(stock, detail, i_detail, sector_stat, market, lifecycle)
     flags.extend(strategy_flags)
     flags = list(dict.fromkeys(flags))
     risk = risk_score(flags)
     penalty, hits = adaptive_penalty(flags, rules)
     score = max(0, min(100, market["score"] + sector + trend + quant + intraday + risk + strategy_score - strategy_penalty - penalty))
-    high_risk = any(key in "；".join(flags) for key in ["分时未站上均价线", "未站上20日线", "最后5分钟急拉", "流通市值不适合", "成交额不足"])
+    high_risk = any(key in "；".join(flags) for key in ["分时未站上均价线", "未站上20日线", "最后5分钟急拉", "尾盘5分钟脉冲急拉", "收盘远离VWAP", "板块退潮", "流通市值不适合", "成交额不足"])
     focus_min = int(rules.get("min_score_for_focus") or 80)
     row = dict(stock)
     row.update(detail)
@@ -1196,6 +1454,7 @@ def analyze_one(stock: dict, sector_by_name: dict, market: dict, rules: dict) ->
             "limit_up_count": market.get("limit_up_count"),
             "limit_down_count": market.get("limit_down_count"),
             "limit_spread": market.get("limit_spread"),
+            "sector_lifecycle": lifecycle,
             "sector_score": sector,
             "trend_score": trend,
             "quant_score": quant,
@@ -1284,7 +1543,8 @@ def write_wechat_summary(rows: list[dict], market: dict, stats: dict, report_pat
                     f"{display_group(row)}",
                     f"涨幅：{fmt_pct(row['pct'])} | 量比：{fmt_num(row['volume_ratio'])} | 换手：{fmt_pct(row['turnover'])}",
                     f"尾盘：{row.get('tail_heat_level') or '-'} | 上限：{fmt_pct(row.get('tail_heat_limit'))}",
-                    f"MA5乖离：{fmt_pct(row.get('bias_ma5'))} | 跑赢板块：{fmt_pct(row.get('relative_strength'))}",
+                    f"板块：{row.get('sector_lifecycle') or '-'} | VWAP偏离：{fmt_pct(row.get('vwap_deviation'))}",
+                    f"MA5乖离：{fmt_pct(row.get('bias_ma5'))} | 动态乖离：{fmt_num(row.get('bias_ma5_range_ratio'))}倍",
                     f"成交：{fmt_yi(row['amount'])} | 流通：{fmt_yi(row['float_mv'])}",
                     f"理由：{row.get('short_reason') or '通过短线硬条件'}",
                     "",
@@ -1327,6 +1587,7 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict], stats:
         "float_mv",
         "sector_rank",
         "sector_avg_pct",
+        "sector_lifecycle",
         "relative_strength",
         "market_score",
         "market_light_score",
@@ -1345,6 +1606,19 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict], stats:
         "strategy_tags",
         "tail_heat_limit",
         "tail_heat_level",
+        "avg_range5",
+        "bias_ma5_range_ratio",
+        "bias_ma5_percentile60",
+        "return_3d",
+        "return_5d",
+        "ma20_slope",
+        "vwap_support_ratio",
+        "late_vwap_support_ratio",
+        "vwap_deviation",
+        "late_amount_ratio",
+        "late_up_amount_ratio",
+        "max_tail_5m_return",
+        "tail_slope",
         "ma5",
         "ma10",
         "ma20",
@@ -1379,10 +1653,10 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict], stats:
         "",
         "- 主板：涨幅 2%-6%，换手 4%-12%；双创：涨幅 3%-8%，换手 5%-15%。",
         "- 共同条件：量比 1.2-3.5，成交额不低于 3 亿，流通市值 50-300 亿，日内位置和尾盘分时位置靠前。",
-        "- 叠加策略：市场红黄绿灯、涨跌停结构、MA5乖离率、板块相对强弱、尾盘温和走强、换手/量比过热。",
-        "- 主推荐：总分不低于 98（若自适应最低分更高则按更高值），市场分不低于 16，市场绿灯，尾盘涨幅低于动态热度上限，MA5乖离不过热。",
-        "- 核心候选：总分不低于 92（若自适应最低分更高则按更高值），14:30 后涨幅低于 2%，MA5乖离不过热，市场不是红灯。",
-        "- 排除：ST/退市/新股、分时或日K数据缺失、市场红灯、14:30后走弱、未站上关键均线、MA5乖离超过10%、最后5分钟急拉放量。",
+        "- 叠加策略：市场红黄绿灯、板块生命周期、动态MA5乖离、VWAP承接、尾盘成交结构、近3/5日加速、换手/量比过热。",
+        "- 主推荐：总分不低于 98（若自适应最低分更高则按更高值），市场分不低于 16，市场绿灯，板块启动/发酵，尾盘不过热且不脉冲，动态乖离不过热，VWAP承接良好。",
+        "- 核心候选：总分不低于 92（若自适应最低分更高则按更高值），14:30 后涨幅低于 2%，市场不是红灯，板块不退潮，尾盘不脉冲且不远离VWAP。",
+        "- 排除：ST/退市/新股、分时或日K数据缺失、市场红灯、板块退潮、14:30后走弱、未站上关键均线、MA5动态乖离过热、尾盘脉冲急拉、收盘远离VWAP。",
         "",
         "## 强势板块 Top 5",
         "",
@@ -1395,19 +1669,20 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict], stats:
         "",
         "## 短线候选清单",
         "",
-        "| 层级 | 分数 | 股票 | 行业/分层 | 涨幅 | 尾盘热度 | MA5乖离 | 跑赢板块 | 量比 | 换手 | 短线理由 |",
-        "|---|---:|---|---|---:|---|---:|---:|---:|---:|---|",
+        "| 层级 | 分数 | 股票 | 行业/分层 | 板块阶段 | 涨幅 | 尾盘热度 | 动态乖离 | VWAP偏离 | 量比 | 换手 | 短线理由 |",
+        "|---|---:|---|---|---|---:|---|---:|---:|---:|---:|---|",
     ]
     if rows:
         for row in rows:
             lines.append(
                 f"| {row.get('candidate_tier') or '-'} | {row['score']} | {stock_link(row)} | {display_group(row)} | "
+                f"{row.get('sector_lifecycle') or '-'} | "
                 f"{fmt_pct(row['pct'])} | {row.get('tail_heat_level') or '-'}<{fmt_pct(row.get('tail_heat_limit'))} | "
-                f"{fmt_pct(row.get('bias_ma5'))} | {fmt_pct(row.get('relative_strength'))} | "
+                f"{fmt_num(row.get('bias_ma5_range_ratio'))} | {fmt_pct(row.get('vwap_deviation'))} | "
                 f"{fmt_num(row['volume_ratio'])} | {fmt_pct(row['turnover'])} | {row.get('short_reason') or '-'} |"
             )
     else:
-        lines.append("| - | - | 今日无短线候选 | - | - | - | - | - | - | - | 全市场筛选后无股票同时满足硬条件和分时/K线验证 |")
+        lines.append("| - | - | 今日无短线候选 | - | - | - | - | - | - | - | - | 全市场筛选后无股票同时满足硬条件和分时/K线验证 |")
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     wechat_path = write_wechat_summary(rows, market, stats, report_path)
     return csv_path, report_path, wechat_path

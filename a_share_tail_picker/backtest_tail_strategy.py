@@ -79,8 +79,22 @@ TRADE_FIELDS = [
     "strategy_score",
     "strategy_penalty",
     "strategy_tags",
+    "sector_lifecycle",
     "tail_heat_limit",
     "tail_heat_level",
+    "avg_range5",
+    "bias_ma5_range_ratio",
+    "bias_ma5_percentile60",
+    "return_3d",
+    "return_5d",
+    "ma20_slope",
+    "vwap_support_ratio",
+    "late_vwap_support_ratio",
+    "vwap_deviation",
+    "late_amount_ratio",
+    "late_up_amount_ratio",
+    "max_tail_5m_return",
+    "tail_slope",
     "pct",
     "volume_ratio",
     "turnover",
@@ -568,7 +582,8 @@ def analyze_historical_one(
     flags.extend(i_flags)
     sector_stat = sector_by_name.get(stock["industry"])
     sector = picker.score_sector(sector_stat)
-    strategy_score, strategy_penalty, strategy_tags, strategy_flags, relative_strength = picker.score_strategy_overlay(stock, detail, i_detail, sector_stat, market)
+    lifecycle = picker.sector_lifecycle(sector_stat, market)
+    strategy_score, strategy_penalty, strategy_tags, strategy_flags, relative_strength = picker.score_strategy_overlay(stock, detail, i_detail, sector_stat, market, lifecycle)
     flags.extend(strategy_flags)
     flags = list(dict.fromkeys(flags))
     risk = picker.risk_score(flags)
@@ -588,6 +603,7 @@ def analyze_historical_one(
             "market_light_score": market.get("market_light_score"),
             "market_light_status": market.get("market_light_status"),
             "market_light_label": market.get("market_light_label"),
+            "sector_lifecycle": lifecycle,
             "sector_score": sector,
             "trend_score": trend,
             "quant_score": quant,
