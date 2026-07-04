@@ -98,6 +98,8 @@ SAMPLE_FIELDS = [
     "risk_score",
     "strategy_score",
     "strategy_penalty",
+    "tail_heat_limit",
+    "tail_heat_level",
     "pct",
     "price",
     "volume_ratio",
@@ -926,6 +928,29 @@ def between(value, low, high) -> bool:
     return value is not None and low <= value <= high
 
 
+def tail_heat_limit(row: dict) -> float:
+    intraday_range_pct = pct(row.get("high"), row.get("low"))
+    if intraday_range_pct is None:
+        return 0.8
+    return round(max(0.5, min(1.0, intraday_range_pct * 0.12)), 2)
+
+
+def tail_heat_level(row: dict) -> str:
+    late_return = f(row.get("late_return"))
+    if late_return is None:
+        return "未知"
+    if late_return < 0:
+        return "走弱"
+    limit = f(row.get("tail_heat_limit")) or tail_heat_limit(row)
+    if late_return < 0.2:
+        return "温和"
+    if late_return < limit:
+        return "可接受"
+    if late_return < 2:
+        return "偏热"
+    return "过热"
+
+
 def score_strategy_overlay(stock: dict, detail: dict, i_detail: dict, sector_stat: dict | None, market: dict) -> tuple[int, int, list[str], list[str], float | None]:
     score = 0
     penalty = 0
@@ -951,11 +976,18 @@ def score_strategy_overlay(stock: dict, detail: dict, i_detail: dict, sector_sta
 
     late_return = f(i_detail.get("late_return"))
     if late_return is not None:
-        if 0 <= late_return < 2:
-            score += 2
+        heat_limit = tail_heat_limit({**stock, **detail, **i_detail})
+        if 0 <= late_return < 0.2:
+            score += 3
             tags.append("尾盘温和走强")
+        elif 0.2 <= late_return < heat_limit:
+            score += 2
+            tags.append("尾盘可接受走强")
+        elif heat_limit <= late_return < 2:
+            penalty += 2
+            flags.append("尾盘涨幅偏热")
         elif late_return >= 2:
-            penalty += 4
+            penalty += 6
             flags.append("14:30后涨幅过大")
 
     turnover = f(stock.get("turnover"))
@@ -1003,6 +1035,17 @@ def candidate_tier(row: dict, focus_min: int) -> str:
     late_return = f(row.get("late_return"))
     bias_ma5 = f(row.get("bias_ma5"))
     light_status = row.get("market_light_status")
+    heat_limit = f(row.get("tail_heat_limit")) or tail_heat_limit(row)
+    market_score = f(row.get("market_score")) or 0
+    if (
+        score >= max(98, focus_min)
+        and market_score >= 16
+        and late_return is not None
+        and 0 <= late_return < heat_limit
+        and (bias_ma5 is None or bias_ma5 <= 7)
+        and light_status == "green"
+    ):
+        return "主推荐"
     if (
         score >= max(92, focus_min)
         and late_return is not None
@@ -1015,7 +1058,8 @@ def candidate_tier(row: dict, focus_min: int) -> str:
 
 
 def candidate_sort_key(row: dict) -> tuple[int, float]:
-    tier_rank = 0 if row.get("candidate_tier") == "核心候选" else 1
+    rank_map = {"主推荐": 0, "核心候选": 1, "观察候选": 2}
+    tier_rank = rank_map.get(row.get("candidate_tier"), 3)
     return (tier_rank, -(f(row.get("score")) or 0))
 
 
@@ -1092,6 +1136,8 @@ def concise_reason(row: dict) -> str:
         parts.append(f"MA5乖离{fmt_pct(row['bias_ma5'])}")
     if f(row.get("late_return")) is not None:
         parts.append(f"14:30后{fmt_pct(row['late_return'])}")
+    if row.get("tail_heat_level"):
+        parts.append(f"尾盘{row['tail_heat_level']}")
     if f(row.get("intraday_range_pos")) is not None:
         parts.append(f"分时位置{f(row['intraday_range_pos']) * 100:.0f}%")
     if f(row.get("day_range_pos")) is not None:
@@ -1136,6 +1182,8 @@ def analyze_one(stock: dict, sector_by_name: dict, market: dict, rules: dict) ->
     row = dict(stock)
     row.update(detail)
     row.update(i_detail)
+    row["tail_heat_limit"] = tail_heat_limit(row)
+    row["tail_heat_level"] = tail_heat_level(row)
     row.update(
         {
             "pick_date": today(),
@@ -1198,6 +1246,7 @@ def write_wechat_summary(rows: list[dict], market: dict, stats: dict, report_pat
     out = OUTPUT_DIR / today()
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"wechat_summary_{stamp()}.md"
+    main_count = sum(1 for row in rows if row.get("candidate_tier") == "主推荐")
     core_count = sum(1 for row in rows if row.get("candidate_tier") == "核心候选")
     watch_count = sum(1 for row in rows if row.get("candidate_tier") == "观察候选")
     lines = [
@@ -1209,35 +1258,42 @@ def write_wechat_summary(rows: list[dict], market: dict, stats: dict, report_pat
         f"涨跌停：涨停{market.get('limit_up_count', 0)} / 跌停{market.get('limit_down_count', 0)}",
         f"覆盖：沪深A股 {stats['universe_count']} 只",
         f"硬条件：{stats['hard_pool_count']} 只",
-        f"候选：核心{core_count} / 观察{watch_count}",
+        f"候选：主推{main_count} / 核心{core_count} / 观察{watch_count}",
         "",
         "仅作公开行情筛选和复盘，不构成买卖指令。",
         "",
     ]
-    if not rows:
+    main_rows = [row for row in rows if row.get("candidate_tier") == "主推荐"]
+    if not main_rows:
         lines.extend(
             [
-                "今日没有短线候选。",
+                "今日没有主推荐。",
                 "",
-                "原因：全市场筛选后，没有股票同时满足涨幅、量比、换手、流通市值、日内位置、尾盘分时、日K结构和风险条件。",
+                "原因：全市场筛选后，没有股票同时满足强市场、高分、尾盘不过热、MA5乖离不过热等主推荐条件。",
             ]
         )
+        if core_count or watch_count:
+            lines.append("")
+            lines.append(f"另有核心{core_count}只、观察{watch_count}只，仅保留在完整报告中。")
     else:
-        for index, row in enumerate(rows[:8], 1):
+        for index, row in enumerate(main_rows[:8], 1):
             lines.extend(
                 [
                     f"{index}. {stock_link(row)}",
                     f"{row.get('candidate_tier') or '观察候选'} | {row['score']}分",
                     f"{display_group(row)}",
                     f"涨幅：{fmt_pct(row['pct'])} | 量比：{fmt_num(row['volume_ratio'])} | 换手：{fmt_pct(row['turnover'])}",
+                    f"尾盘：{row.get('tail_heat_level') or '-'} | 上限：{fmt_pct(row.get('tail_heat_limit'))}",
                     f"MA5乖离：{fmt_pct(row.get('bias_ma5'))} | 跑赢板块：{fmt_pct(row.get('relative_strength'))}",
                     f"成交：{fmt_yi(row['amount'])} | 流通：{fmt_yi(row['float_mv'])}",
                     f"理由：{row.get('short_reason') or '通过短线硬条件'}",
                     "",
                 ]
             )
-        if len(rows) > 8:
-            lines.append(f"另有 {len(rows) - 8} 只候选，见完整报告。")
+        if len(main_rows) > 8:
+            lines.append(f"另有 {len(main_rows) - 8} 只主推荐，见完整报告。")
+        if core_count or watch_count:
+            lines.append(f"核心{core_count}只、观察{watch_count}只仅作复盘学习，见完整报告。")
     path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
     return path
 
@@ -1287,6 +1343,8 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict], stats:
         "strategy_score",
         "strategy_penalty",
         "strategy_tags",
+        "tail_heat_limit",
+        "tail_heat_level",
         "ma5",
         "ma10",
         "ma20",
@@ -1305,6 +1363,7 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict], stats:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
+    main_count = sum(1 for row in rows if row.get("candidate_tier") == "主推荐")
     core_count = sum(1 for row in rows if row.get("candidate_tier") == "核心候选")
     watch_count = sum(1 for row in rows if row.get("candidate_tier") == "观察候选")
     lines = [
@@ -1313,7 +1372,7 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict], stats:
         f"- 生成时间：{now_cn().strftime('%Y-%m-%d %H:%M:%S %Z')}",
         f"- 市场环境：{market['label']}，{market['score']}/20；{market.get('market_light_label', '-')}，{market.get('market_light_score', '-')}/100；上涨占比 {market['adv_ratio']:.1%}，平均涨幅 {market['avg_pct']:.2f}%。",
         f"- 涨跌停结构：涨停 {market.get('limit_up_count', 0)} 只，跌停 {market.get('limit_down_count', 0)} 只，净值 {market.get('limit_spread', 0)}。",
-        f"- 筛选覆盖：沪深A股 {stats['universe_count']} 只；短线硬条件通过 {stats['hard_pool_count']} 只；完成明细评分 {stats['detail_count']} 只；候选 {len(rows)} 只，其中核心 {core_count} 只、观察 {watch_count} 只。",
+        f"- 筛选覆盖：沪深A股 {stats['universe_count']} 只；短线硬条件通过 {stats['hard_pool_count']} 只；完成明细评分 {stats['detail_count']} 只；候选 {len(rows)} 只，其中主推 {main_count} 只、核心 {core_count} 只、观察 {watch_count} 只。",
         "- 边界：本报告只做公开行情筛选与研究排序，不构成买卖指令。",
         "",
         "## 严格短线口径",
@@ -1321,6 +1380,7 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict], stats:
         "- 主板：涨幅 2%-6%，换手 4%-12%；双创：涨幅 3%-8%，换手 5%-15%。",
         "- 共同条件：量比 1.2-3.5，成交额不低于 3 亿，流通市值 50-300 亿，日内位置和尾盘分时位置靠前。",
         "- 叠加策略：市场红黄绿灯、涨跌停结构、MA5乖离率、板块相对强弱、尾盘温和走强、换手/量比过热。",
+        "- 主推荐：总分不低于 98（若自适应最低分更高则按更高值），市场分不低于 16，市场绿灯，尾盘涨幅低于动态热度上限，MA5乖离不过热。",
         "- 核心候选：总分不低于 92（若自适应最低分更高则按更高值），14:30 后涨幅低于 2%，MA5乖离不过热，市场不是红灯。",
         "- 排除：ST/退市/新股、分时或日K数据缺失、市场红灯、14:30后走弱、未站上关键均线、MA5乖离超过10%、最后5分钟急拉放量。",
         "",
@@ -1335,18 +1395,19 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict], stats:
         "",
         "## 短线候选清单",
         "",
-        "| 层级 | 分数 | 股票 | 行业/分层 | 涨幅 | MA5乖离 | 跑赢板块 | 量比 | 换手 | 短线理由 |",
-        "|---|---:|---|---|---:|---:|---:|---:|---:|---|",
+        "| 层级 | 分数 | 股票 | 行业/分层 | 涨幅 | 尾盘热度 | MA5乖离 | 跑赢板块 | 量比 | 换手 | 短线理由 |",
+        "|---|---:|---|---|---:|---|---:|---:|---:|---:|---|",
     ]
     if rows:
         for row in rows:
             lines.append(
                 f"| {row.get('candidate_tier') or '-'} | {row['score']} | {stock_link(row)} | {display_group(row)} | "
-                f"{fmt_pct(row['pct'])} | {fmt_pct(row.get('bias_ma5'))} | {fmt_pct(row.get('relative_strength'))} | "
+                f"{fmt_pct(row['pct'])} | {row.get('tail_heat_level') or '-'}<{fmt_pct(row.get('tail_heat_limit'))} | "
+                f"{fmt_pct(row.get('bias_ma5'))} | {fmt_pct(row.get('relative_strength'))} | "
                 f"{fmt_num(row['volume_ratio'])} | {fmt_pct(row['turnover'])} | {row.get('short_reason') or '-'} |"
             )
     else:
-        lines.append("| - | - | 今日无短线候选 | - | - | - | - | - | - | 全市场筛选后无股票同时满足硬条件和分时/K线验证 |")
+        lines.append("| - | - | 今日无短线候选 | - | - | - | - | - | - | - | 全市场筛选后无股票同时满足硬条件和分时/K线验证 |")
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     wechat_path = write_wechat_summary(rows, market, stats, report_path)
     return csv_path, report_path, wechat_path

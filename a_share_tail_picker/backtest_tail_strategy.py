@@ -79,6 +79,8 @@ TRADE_FIELDS = [
     "strategy_score",
     "strategy_penalty",
     "strategy_tags",
+    "tail_heat_limit",
+    "tail_heat_level",
     "pct",
     "volume_ratio",
     "turnover",
@@ -575,6 +577,8 @@ def analyze_historical_one(
     row = dict(stock)
     row.update(detail)
     row.update(i_detail)
+    row["tail_heat_limit"] = picker.tail_heat_limit(row)
+    row["tail_heat_level"] = picker.tail_heat_level(row)
     row.update(
         {
             "pick_date": stock["date"],
