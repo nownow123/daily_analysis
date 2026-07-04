@@ -59,7 +59,11 @@ TRADE_FIELDS = [
     "conclusion",
     "candidate_tier",
     "data_quality",
+    "signal_time",
+    "signal_price",
+    "buy_time",
     "buy_price",
+    "buy_price_source",
     "next_date",
     "return_open",
     "return_0945",
@@ -665,13 +669,23 @@ def positive_avg_return(rows: list[dict], buy: float, cost_pct: float) -> tuple[
     return gross, len(returns), gross - cost_pct if gross is not None else None
 
 
-def evaluate_trade(row: dict, history: list[dict], minute_store: MinuteStore, cost_pct: float) -> dict:
+def evaluate_trade(row: dict, history: list[dict], minute_store: MinuteStore, buy_time: dt.time, cost_pct: float) -> dict:
     trade = {key: "" for key in TRADE_FIELDS}
     for key in TRADE_FIELDS:
         if key in row:
             trade[key] = row[key]
-    trade["buy_price"] = row.get("price")
-    buy = f(row.get("price"))
+    trade["signal_time"] = row.get("pick_time")
+    trade["signal_price"] = row.get("price")
+    trade["buy_time"] = buy_time.strftime("%H:%M:%S")
+    buy_rows = minute_store.rows_for_date(row["code"], row["pick_date"], until=buy_time)
+    buy_price = price_before(buy_rows, buy_time)
+    if buy_price is None:
+        buy_price = f(row.get("price"))
+        trade["buy_price_source"] = "signal_price_fallback"
+    else:
+        trade["buy_price_source"] = "minute_snapshot"
+    trade["buy_price"] = buy_price
+    buy = f(buy_price)
     if buy in (None, 0):
         return trade
     next_row = next_kline_row(history, row["pick_date"])
@@ -801,15 +815,15 @@ def write_report(
         "",
         f"- 生成时间：{cn_now_text()}",
         f"- 回放区间：{args.start} 至 {args.end}",
-        f"- 买入时间假设：{args.pick_time}；卖出评估：次日 9:30-10:00 区间内正收益样本的平均值；若无正收益，则用10:00或最后可见价格收益。",
+        f"- 信号时间假设：{args.signal_time}；买入时间假设：{args.buy_time}；卖出评估：次日 9:30-10:00 区间内正收益样本的平均值；若无正收益，则用10:00或最后可见价格收益。",
         f"- 单笔成本扣减：{args.cost_pct:.2f}%",
         f"- 当前活跃沪深A股覆盖：{universe_count} 只；成功取得日K：{histories_count} 只。",
         f"- 每日最多选取：{args.top} 只严格候选。",
         "",
         "## 重要口径",
         "",
-        "- 全市场初筛使用历史日K和当前流通股本近似，进入候选池后使用 Yahoo 5分钟线和腾讯历史5分钟线还原 14:45。",
-        "- 因公开接口没有完整历史全市场 14:45 快照，换手、成交额和量比存在近似；报告已保留 `data_quality` 字段。",
+        f"- 全市场初筛使用历史日K和当前流通股本近似，进入候选池后使用 Yahoo 5分钟线和腾讯历史5分钟线还原 {args.signal_time} 信号与 {args.buy_time} 买入价。",
+        f"- 因公开接口没有完整历史全市场 {args.signal_time} 快照，换手、成交额和量比存在近似；报告已保留 `data_quality` 字段。",
         "- 当前活跃股票池会带来轻微幸存者偏差，退市或长期停牌股票不在样本内。",
         "- 本报告只做策略复盘和研究，不构成买卖指令。",
         "",
@@ -860,7 +874,8 @@ def run_backtest(args: argparse.Namespace) -> tuple[Path, Path, Path]:
     start = parse_date(args.start)
     end = parse_date(args.end)
     minute_end = end + dt.timedelta(days=7)
-    pick_time = dt.datetime.strptime(args.pick_time, "%H:%M").time()
+    signal_time = dt.datetime.strptime(args.signal_time, "%H:%M").time()
+    buy_time = dt.datetime.strptime(args.buy_time, "%H:%M").time()
 
     BACKTEST_DIR.mkdir(parents=True, exist_ok=True)
     output_dir = BACKTEST_DIR / f"{args.start}_to_{args.end}"
@@ -918,7 +933,7 @@ def run_backtest(args: argparse.Namespace) -> tuple[Path, Path, Path]:
                     market,
                     rules,
                     minute_store,
-                    pick_time,
+                    signal_time,
                 )
                 for stock in prefilter
             ]
@@ -932,7 +947,7 @@ def run_backtest(args: argparse.Namespace) -> tuple[Path, Path, Path]:
         selected = strict[: args.top]
         day_trades: list[dict] = []
         for rank, row in enumerate(selected, 1):
-            trade = evaluate_trade(row, histories[row["code"]], minute_store, args.cost_pct)
+            trade = evaluate_trade(row, histories[row["code"]], minute_store, buy_time, args.cost_pct)
             trade["rank"] = rank
             day_trades.append(trade)
             trade_rows.append(trade)
@@ -985,14 +1000,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start", default=default_start)
     parser.add_argument("--end", default=default_end)
     parser.add_argument("--top", type=int, default=5)
-    parser.add_argument("--pick-time", default="14:45")
+    parser.add_argument("--pick-time", default="14:45", help="backward-compatible alias for --signal-time")
+    parser.add_argument("--signal-time", default=None, help="time used for candidate signal generation")
+    parser.add_argument("--buy-time", default=None, help="time used for simulated buy price")
     parser.add_argument("--cost-pct", type=float, default=0.15)
     parser.add_argument("--workers", type=int, default=12)
     parser.add_argument("--kline-days", type=int, default=90)
     parser.add_argument("--max-detail", type=int, default=0, help="0 means analyze every relaxed prefilter candidate")
     parser.add_argument("--max-codes", type=int, default=0, help="debug only; 0 means full current A-share universe")
     parser.add_argument("--refresh-cache", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.signal_time = args.signal_time or args.pick_time
+    args.buy_time = args.buy_time or args.signal_time
+    return args
 
 
 def main() -> int:
