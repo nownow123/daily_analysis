@@ -86,13 +86,18 @@ SAMPLE_FIELDS = [
     "name",
     "industry",
     "conclusion",
+    "candidate_tier",
     "score",
     "market_score",
+    "market_light_score",
+    "market_light_status",
     "sector_score",
     "trend_score",
     "quant_score",
     "intraday_score",
     "risk_score",
+    "strategy_score",
+    "strategy_penalty",
     "pct",
     "price",
     "volume_ratio",
@@ -100,6 +105,11 @@ SAMPLE_FIELDS = [
     "amount",
     "float_mv",
     "sector_rank",
+    "sector_avg_pct",
+    "relative_strength",
+    "bias_ma5",
+    "bias_ma10",
+    "bias_ma20",
     "late_return",
     "last5_return",
     "day_range_pos",
@@ -197,6 +207,13 @@ def pct(price, base):
     return (price / base - 1) * 100
 
 
+def clamp(value, low, high):
+    value = f(value)
+    if value is None:
+        return low
+    return max(low, min(high, value))
+
+
 def fmt_pct(value):
     value = f(value)
     return "-" if value is None else f"{value:.2f}%"
@@ -261,6 +278,12 @@ def board(code: str) -> str:
 
 def is_dual(code: str) -> bool:
     return board(code) in {"创业板", "科创板"}
+
+
+def limit_pct_for(code: str) -> float:
+    if board(code) == "北交所":
+        return 30.0
+    return 20.0 if is_dual(code) else 10.0
 
 
 def normalize(row: dict) -> dict:
@@ -510,6 +533,24 @@ def score_market(stocks: list[dict], sectors: list[dict]) -> dict:
     avg_pct = mean(pcts) or 0
     top_avg = sectors[0]["avg_pct"] if sectors else 0
     strong_sector_count = sum(1 for x in sectors[:20] if (x["avg_pct"] or 0) >= 2)
+    limit_up_count = 0
+    limit_down_count = 0
+    for stock in stocks:
+        stock_pct = f(stock.get("pct"))
+        if stock_pct is None:
+            continue
+        limit_pct = limit_pct_for(stock["code"])
+        if stock_pct >= limit_pct - 0.3:
+            limit_up_count += 1
+        elif stock_pct <= -limit_pct + 0.3:
+            limit_down_count += 1
+    breadth_score = adv_ratio * 100 if pcts else 50
+    index_score = clamp(50 + avg_pct * 12, 0, 100)
+    limit_total = limit_up_count + limit_down_count
+    limit_score = limit_up_count / limit_total * 100 if limit_total else 50
+    market_light_score = round(breadth_score * 0.45 + index_score * 0.35 + limit_score * 0.20)
+    market_light_status = "green" if market_light_score >= 60 else "yellow" if market_light_score >= 40 else "red"
+    market_light_label = {"green": "绿灯", "yellow": "黄灯", "red": "红灯"}[market_light_status]
     score = 0
     score += 8 if adv_ratio >= 0.58 else 6 if adv_ratio >= 0.52 else 4 if adv_ratio >= 0.47 else 2 if adv_ratio >= 0.42 else 0
     score += 5 if avg_pct >= 0.8 else 4 if avg_pct >= 0.4 else 2 if avg_pct >= 0 else 0
@@ -517,7 +558,18 @@ def score_market(stocks: list[dict], sectors: list[dict]) -> dict:
     score += 3 if strong_sector_count >= 3 else 2 if strong_sector_count >= 2 else 1 if strong_sector_count >= 1 else 0
     score = min(score, 20)
     label = "顺风" if score >= 16 else "中性偏强" if score >= 12 else "中性偏弱" if score >= 8 else "逆风"
-    return {"score": score, "label": label, "adv_ratio": adv_ratio, "avg_pct": avg_pct}
+    return {
+        "score": score,
+        "label": label,
+        "adv_ratio": adv_ratio,
+        "avg_pct": avg_pct,
+        "market_light_score": market_light_score,
+        "market_light_status": market_light_status,
+        "market_light_label": market_light_label,
+        "limit_up_count": limit_up_count,
+        "limit_down_count": limit_down_count,
+        "limit_spread": limit_up_count - limit_down_count,
+    }
 
 
 def score_sector(stat: dict | None) -> int:
@@ -750,6 +802,16 @@ def score_trend(stock: dict, kline: list[dict]) -> tuple[int, list[str], dict]:
     if len(closes) < 20 or price is None:
         return 5, ["日K数据不足"], detail
     ma5, ma10, ma20 = mean(closes[-5:]), mean(closes[-10:]), mean(closes[-20:])
+    detail.update(
+        {
+            "ma5": ma5,
+            "ma10": ma10,
+            "ma20": ma20,
+            "bias_ma5": pct(price, ma5),
+            "bias_ma10": pct(price, ma10),
+            "bias_ma20": pct(price, ma20),
+        }
+    )
     score = 0
     if ma20 and price > ma20:
         score += 5
@@ -761,6 +823,18 @@ def score_trend(stock: dict, kline: list[dict]) -> tuple[int, list[str], dict]:
         score += 3
     else:
         flags.append("短均线结构不强")
+    bias_ma5 = f(detail.get("bias_ma5"))
+    if bias_ma5 is not None:
+        if -3 <= bias_ma5 <= 5:
+            score += 2
+        elif 5 < bias_ma5 <= 7:
+            flags.append("MA5乖离率偏高")
+        elif 7 < bias_ma5 <= 10:
+            flags.append("MA5乖离率过高")
+        elif bias_ma5 > 10:
+            flags.append("MA5乖离率超过10%")
+        elif bias_ma5 < -3:
+            flags.append("跌破MA5过深")
     if len(volumes) >= 6 and mean(volumes[-6:-1]):
         vol_ratio = volumes[-1] / mean(volumes[-6:-1])
         detail["vol_vs_ma5"] = vol_ratio
@@ -852,11 +926,106 @@ def between(value, low, high) -> bool:
     return value is not None and low <= value <= high
 
 
+def score_strategy_overlay(stock: dict, detail: dict, i_detail: dict, sector_stat: dict | None, market: dict) -> tuple[int, int, list[str], list[str], float | None]:
+    score = 0
+    penalty = 0
+    tags: list[str] = []
+    flags: list[str] = []
+    bias_ma5 = f(detail.get("bias_ma5"))
+    if bias_ma5 is not None:
+        if -3 <= bias_ma5 <= 5:
+            score += 3
+            tags.append("MA5乖离健康")
+        elif 5 < bias_ma5 <= 7:
+            penalty += 1
+            flags.append("MA5乖离率偏高")
+        elif 7 < bias_ma5 <= 10:
+            penalty += 3
+            flags.append("MA5乖离率过高")
+        elif bias_ma5 > 10:
+            penalty += 6
+            flags.append("MA5乖离率超过10%")
+        elif bias_ma5 < -3:
+            penalty += 2
+            flags.append("跌破MA5过深")
+
+    late_return = f(i_detail.get("late_return"))
+    if late_return is not None:
+        if 0 <= late_return < 2:
+            score += 2
+            tags.append("尾盘温和走强")
+        elif late_return >= 2:
+            penalty += 4
+            flags.append("14:30后涨幅过大")
+
+    turnover = f(stock.get("turnover"))
+    if turnover is not None:
+        if turnover > 12 and not is_dual(stock["code"]):
+            penalty += 2
+            flags.append("主板换手过热")
+        elif turnover > 15 and is_dual(stock["code"]):
+            penalty += 2
+            flags.append("双创换手过热")
+
+    volume_ratio = f(stock.get("volume_ratio"))
+    if volume_ratio is not None and volume_ratio > 3.5:
+        penalty += 2
+        flags.append("量比过热")
+
+    relative_strength = None
+    if sector_stat and f(stock.get("pct")) is not None and f(sector_stat.get("avg_pct")) is not None:
+        relative_strength = f(stock.get("pct")) - f(sector_stat.get("avg_pct"))
+        if relative_strength >= 2:
+            score += 3
+            tags.append("跑赢板块2%+")
+        elif relative_strength >= 0:
+            score += 1
+            tags.append("不弱于板块")
+        else:
+            penalty += 1
+            flags.append("弱于所属板块")
+
+    light_status = market.get("market_light_status")
+    if light_status == "green":
+        score += 1
+        tags.append("市场绿灯")
+    elif light_status == "red":
+        penalty += 5
+        flags.append("市场红灯")
+
+    return min(score, 10), min(penalty, 12), tags, flags, relative_strength
+
+
+def candidate_tier(row: dict, focus_min: int) -> str:
+    if row.get("short_ready") != "是":
+        return ""
+    score = f(row.get("score")) or 0
+    late_return = f(row.get("late_return"))
+    bias_ma5 = f(row.get("bias_ma5"))
+    light_status = row.get("market_light_status")
+    if (
+        score >= max(92, focus_min)
+        and late_return is not None
+        and 0 <= late_return < 2
+        and (bias_ma5 is None or bias_ma5 <= 7)
+        and light_status != "red"
+    ):
+        return "核心候选"
+    return "观察候选"
+
+
+def candidate_sort_key(row: dict) -> tuple[int, float]:
+    tier_rank = 0 if row.get("candidate_tier") == "核心候选" else 1
+    return (tier_rank, -(f(row.get("score")) or 0))
+
+
 def strict_short_blockers(row: dict, focus_min: int) -> list[str]:
     blockers = []
     dual = is_dual(row["code"])
     if (f(row.get("market_score")) or 0) < 8:
         blockers.append("市场环境逆风")
+    if row.get("market_light_status") == "red":
+        blockers.append("市场红灯")
     if (f(row.get("score")) or 0) < focus_min:
         blockers.append(f"总分低于{focus_min}")
     if dual:
@@ -881,6 +1050,8 @@ def strict_short_blockers(row: dict, focus_min: int) -> list[str]:
         blockers.append("尾盘分时位置不够靠前")
     if f(row.get("late_return")) is None or f(row.get("late_return")) < 0:
         blockers.append("14:30后未走强")
+    if f(row.get("bias_ma5")) is not None and f(row.get("bias_ma5")) > 10:
+        blockers.append("MA5乖离率超过10%")
     if f(row.get("trend_score")) is None or f(row.get("trend_score")) < 10:
         blockers.append("日K结构不够强")
     if f(row.get("intraday_score")) is None or f(row.get("intraday_score")) < 14:
@@ -900,6 +1071,8 @@ def strict_short_blockers(row: dict, focus_min: int) -> list[str]:
         "尾盘不在日内高位",
         "14:30后走弱",
         "最后5分钟急拉",
+        "市场红灯",
+        "MA5乖离率超过10%",
     ]
     for keyword in hard_bad:
         if keyword in flags:
@@ -909,14 +1082,22 @@ def strict_short_blockers(row: dict, focus_min: int) -> list[str]:
 
 def concise_reason(row: dict) -> str:
     parts = []
+    if row.get("candidate_tier"):
+        parts.append(row["candidate_tier"])
     if row.get("sector_rank"):
         parts.append(f"板块第{row['sector_rank']}")
+    if f(row.get("relative_strength")) is not None:
+        parts.append(f"跑赢板块{fmt_pct(row['relative_strength'])}")
+    if f(row.get("bias_ma5")) is not None:
+        parts.append(f"MA5乖离{fmt_pct(row['bias_ma5'])}")
     if f(row.get("late_return")) is not None:
         parts.append(f"14:30后{fmt_pct(row['late_return'])}")
     if f(row.get("intraday_range_pos")) is not None:
         parts.append(f"分时位置{f(row['intraday_range_pos']) * 100:.0f}%")
     if f(row.get("day_range_pos")) is not None:
         parts.append(f"日内位置{f(row['day_range_pos']) * 100:.0f}%")
+    tags = [x for x in str(row.get("strategy_tags") or "").split("；") if x]
+    parts.extend(tags[:2])
     return "；".join(parts) if parts else "通过短线硬条件"
 
 
@@ -944,9 +1125,12 @@ def analyze_one(stock: dict, sector_by_name: dict, market: dict, rules: dict) ->
     flags.extend(i_flags)
     sector_stat = sector_by_name.get(stock["industry"])
     sector = score_sector(sector_stat)
+    strategy_score, strategy_penalty, strategy_tags, strategy_flags, relative_strength = score_strategy_overlay(stock, detail, i_detail, sector_stat, market)
+    flags.extend(strategy_flags)
+    flags = list(dict.fromkeys(flags))
     risk = risk_score(flags)
     penalty, hits = adaptive_penalty(flags, rules)
-    score = max(0, min(100, market["score"] + sector + trend + quant + intraday + risk - penalty))
+    score = max(0, min(100, market["score"] + sector + trend + quant + intraday + risk + strategy_score - strategy_penalty - penalty))
     high_risk = any(key in "；".join(flags) for key in ["分时未站上均价线", "未站上20日线", "最后5分钟急拉", "流通市值不适合", "成交额不足"])
     focus_min = int(rules.get("min_score_for_focus") or 80)
     row = dict(stock)
@@ -958,14 +1142,24 @@ def analyze_one(stock: dict, sector_by_name: dict, market: dict, rules: dict) ->
             "pick_time": now_cn().strftime("%H:%M:%S"),
             "generated_at": now_cn().strftime("%Y-%m-%d %H:%M:%S"),
             "market_score": market["score"],
+            "market_light_score": market.get("market_light_score"),
+            "market_light_status": market.get("market_light_status"),
+            "market_light_label": market.get("market_light_label"),
+            "limit_up_count": market.get("limit_up_count"),
+            "limit_down_count": market.get("limit_down_count"),
+            "limit_spread": market.get("limit_spread"),
             "sector_score": sector,
             "trend_score": trend,
             "quant_score": quant,
             "intraday_score": intraday,
             "risk_score": risk,
+            "strategy_score": strategy_score,
+            "strategy_penalty": strategy_penalty,
+            "strategy_tags": "；".join(dict.fromkeys(strategy_tags)),
+            "relative_strength": relative_strength,
             "adaptive_penalty": penalty,
             "score": score,
-            "flags": "；".join(dict.fromkeys(flags)) if flags else "无明显扣分项",
+            "flags": "；".join(flags) if flags else "无明显扣分项",
             "adaptive_hits": "；".join(hits),
             "sector_rank": sector_stat["rank"] if sector_stat else "",
             "sector_avg_pct": sector_stat["avg_pct"] if sector_stat else "",
@@ -974,7 +1168,8 @@ def analyze_one(stock: dict, sector_by_name: dict, market: dict, rules: dict) ->
     blockers = strict_short_blockers(row, focus_min)
     row["short_blockers"] = "；".join(blockers)
     row["short_ready"] = "是" if not blockers and not high_risk else "否"
-    row["conclusion"] = "短线候选" if row["short_ready"] == "是" else "不推荐"
+    row["candidate_tier"] = candidate_tier(row, focus_min)
+    row["conclusion"] = row["candidate_tier"] if row["short_ready"] == "是" else "不推荐"
     row["short_reason"] = concise_reason(row)
     return row
 
@@ -1003,14 +1198,18 @@ def write_wechat_summary(rows: list[dict], market: dict, stats: dict, report_pat
     out = OUTPUT_DIR / today()
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"wechat_summary_{stamp()}.md"
+    core_count = sum(1 for row in rows if row.get("candidate_tier") == "核心候选")
+    watch_count = sum(1 for row in rows if row.get("candidate_tier") == "观察候选")
     lines = [
         "# A股尾盘短线候选",
         "",
         f"时间：{now_cn().strftime('%Y-%m-%d %H:%M')}",
         f"市场：{market['label']} {market['score']}/20",
+        f"红黄绿灯：{market.get('market_light_label', '-')} {market.get('market_light_score', '-')}/100",
+        f"涨跌停：涨停{market.get('limit_up_count', 0)} / 跌停{market.get('limit_down_count', 0)}",
         f"覆盖：沪深A股 {stats['universe_count']} 只",
         f"硬条件：{stats['hard_pool_count']} 只",
-        f"严格候选：{len(rows)} 只",
+        f"候选：核心{core_count} / 观察{watch_count}",
         "",
         "仅作公开行情筛选和复盘，不构成买卖指令。",
         "",
@@ -1018,7 +1217,7 @@ def write_wechat_summary(rows: list[dict], market: dict, stats: dict, report_pat
     if not rows:
         lines.extend(
             [
-                "今日没有严格候选。",
+                "今日没有短线候选。",
                 "",
                 "原因：全市场筛选后，没有股票同时满足涨幅、量比、换手、流通市值、日内位置、尾盘分时、日K结构和风险条件。",
             ]
@@ -1028,8 +1227,10 @@ def write_wechat_summary(rows: list[dict], market: dict, stats: dict, report_pat
             lines.extend(
                 [
                     f"{index}. {stock_link(row)}",
-                    f"分数：{row['score']} | {display_group(row)}",
+                    f"{row.get('candidate_tier') or '观察候选'} | {row['score']}分",
+                    f"{display_group(row)}",
                     f"涨幅：{fmt_pct(row['pct'])} | 量比：{fmt_num(row['volume_ratio'])} | 换手：{fmt_pct(row['turnover'])}",
+                    f"MA5乖离：{fmt_pct(row.get('bias_ma5'))} | 跑赢板块：{fmt_pct(row.get('relative_strength'))}",
                     f"成交：{fmt_yi(row['amount'])} | 流通：{fmt_yi(row['float_mv'])}",
                     f"理由：{row.get('short_reason') or '通过短线硬条件'}",
                     "",
@@ -1053,6 +1254,7 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict], stats:
         "generated_at",
         "score",
         "conclusion",
+        "candidate_tier",
         "short_ready",
         "short_reason",
         "short_blockers",
@@ -1068,12 +1270,29 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict], stats:
         "amount",
         "float_mv",
         "sector_rank",
+        "sector_avg_pct",
+        "relative_strength",
         "market_score",
+        "market_light_score",
+        "market_light_status",
+        "market_light_label",
+        "limit_up_count",
+        "limit_down_count",
+        "limit_spread",
         "sector_score",
         "trend_score",
         "quant_score",
         "intraday_score",
         "risk_score",
+        "strategy_score",
+        "strategy_penalty",
+        "strategy_tags",
+        "ma5",
+        "ma10",
+        "ma20",
+        "bias_ma5",
+        "bias_ma10",
+        "bias_ma20",
         "last_time",
         "late_return",
         "last5_return",
@@ -1086,19 +1305,24 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict], stats:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
+    core_count = sum(1 for row in rows if row.get("candidate_tier") == "核心候选")
+    watch_count = sum(1 for row in rows if row.get("candidate_tier") == "观察候选")
     lines = [
         "# A股尾盘选股报告",
         "",
         f"- 生成时间：{now_cn().strftime('%Y-%m-%d %H:%M:%S %Z')}",
-        f"- 市场环境：{market['label']}，{market['score']}/20，上涨占比 {market['adv_ratio']:.1%}，平均涨幅 {market['avg_pct']:.2f}%",
-        f"- 筛选覆盖：沪深A股 {stats['universe_count']} 只；短线硬条件通过 {stats['hard_pool_count']} 只；完成明细评分 {stats['detail_count']} 只；严格候选 {len(rows)} 只。",
+        f"- 市场环境：{market['label']}，{market['score']}/20；{market.get('market_light_label', '-')}，{market.get('market_light_score', '-')}/100；上涨占比 {market['adv_ratio']:.1%}，平均涨幅 {market['avg_pct']:.2f}%。",
+        f"- 涨跌停结构：涨停 {market.get('limit_up_count', 0)} 只，跌停 {market.get('limit_down_count', 0)} 只，净值 {market.get('limit_spread', 0)}。",
+        f"- 筛选覆盖：沪深A股 {stats['universe_count']} 只；短线硬条件通过 {stats['hard_pool_count']} 只；完成明细评分 {stats['detail_count']} 只；候选 {len(rows)} 只，其中核心 {core_count} 只、观察 {watch_count} 只。",
         "- 边界：本报告只做公开行情筛选与研究排序，不构成买卖指令。",
         "",
         "## 严格短线口径",
         "",
         "- 主板：涨幅 2%-6%，换手 4%-12%；双创：涨幅 3%-8%，换手 5%-15%。",
         "- 共同条件：量比 1.2-3.5，成交额不低于 3 亿，流通市值 50-300 亿，日内位置和尾盘分时位置靠前。",
-        "- 排除：ST/退市/新股、分时或日K数据缺失、14:30后走弱、未站上关键均线、最后5分钟急拉放量。",
+        "- 叠加策略：市场红黄绿灯、涨跌停结构、MA5乖离率、板块相对强弱、尾盘温和走强、换手/量比过热。",
+        "- 核心候选：总分不低于 92（若自适应最低分更高则按更高值），14:30 后涨幅低于 2%，MA5乖离不过热，市场不是红灯。",
+        "- 排除：ST/退市/新股、分时或日K数据缺失、市场红灯、14:30后走弱、未站上关键均线、MA5乖离超过10%、最后5分钟急拉放量。",
         "",
         "## 强势板块 Top 5",
         "",
@@ -1109,20 +1333,20 @@ def write_candidates(rows: list[dict], market: dict, sectors: list[dict], stats:
         lines.append(f"| {item['rank']} | {item['industry']} | {fmt_pct(item['avg_pct'])} | {item['adv_ratio']:.0%} | {item['strong_count']} |")
     lines += [
         "",
-        "## 严格候选清单",
+        "## 短线候选清单",
         "",
-        "| 分数 | 股票 | 行业/分层 | 涨幅 | 量比 | 换手 | 成交额 | 流通市值 | 短线理由 |",
-        "|---:|---|---|---:|---:|---:|---:|---:|---|",
+        "| 层级 | 分数 | 股票 | 行业/分层 | 涨幅 | MA5乖离 | 跑赢板块 | 量比 | 换手 | 短线理由 |",
+        "|---|---:|---|---|---:|---:|---:|---:|---:|---|",
     ]
     if rows:
         for row in rows:
             lines.append(
-                f"| {row['score']} | {stock_link(row)} | {display_group(row)} | "
-                f"{fmt_pct(row['pct'])} | {fmt_num(row['volume_ratio'])} | {fmt_pct(row['turnover'])} | "
-                f"{fmt_yi(row['amount'])} | {fmt_yi(row['float_mv'])} | {row.get('short_reason') or '-'} |"
+                f"| {row.get('candidate_tier') or '-'} | {row['score']} | {stock_link(row)} | {display_group(row)} | "
+                f"{fmt_pct(row['pct'])} | {fmt_pct(row.get('bias_ma5'))} | {fmt_pct(row.get('relative_strength'))} | "
+                f"{fmt_num(row['volume_ratio'])} | {fmt_pct(row['turnover'])} | {row.get('short_reason') or '-'} |"
             )
     else:
-        lines.append("| - | 今日无严格候选 | - | - | - | - | - | - | 全市场筛选后无股票同时满足硬条件和分时/K线验证 |")
+        lines.append("| - | - | 今日无短线候选 | - | - | - | - | - | - | 全市场筛选后无股票同时满足硬条件和分时/K线验证 |")
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     wechat_path = write_wechat_summary(rows, market, stats, report_path)
     return csv_path, report_path, wechat_path
@@ -1222,7 +1446,7 @@ def run_picker(args) -> tuple[Path, Path, Path]:
                 print(f"候选分析失败：{exc}", file=sys.stderr)
     rows.sort(key=lambda row: row["score"], reverse=True)
     strict_rows = [row for row in rows if row.get("short_ready") == "是"]
-    strict_rows.sort(key=lambda row: row["score"], reverse=True)
+    strict_rows.sort(key=candidate_sort_key)
     stats = {
         "universe_count": len(stocks),
         "hard_pool_count": hard_pool_count,
@@ -1330,6 +1554,26 @@ def summarize(rows: list[dict], field: str = "net_return_1000") -> dict:
     return {"count": len(vals), "avg": mean(vals), "win_rate": sum(1 for v in vals if v > 0) / len(vals)}
 
 
+def grouped_summaries(rows: list[dict], field: str, min_count: int = 3, split: bool = False) -> list[tuple[str, dict]]:
+    groups: dict[str, list[dict]] = {}
+    for row in rows:
+        raw = str(row.get(field) or "").strip()
+        if not raw:
+            continue
+        values = [x.strip() for x in raw.split("；") if x.strip()] if split else [raw]
+        for value in values:
+            if value and value != "无明显扣分项":
+                groups.setdefault(value, []).append(row)
+    result = [(key, summarize(group_rows)) for key, group_rows in groups.items() if len(group_rows) >= min_count]
+    result.sort(key=lambda item: (item[1]["avg"] is not None, item[1]["avg"] or -99, item[1]["count"]), reverse=True)
+    return result
+
+
+def group_line(name: str, stat: dict) -> str:
+    win_rate_text = "-" if stat["win_rate"] is None else f"{stat['win_rate']:.1%}"
+    return f"- {name}：{stat['count']} 笔，平均净收益 {fmt_pct(stat['avg'])}，胜率 {win_rate_text}"
+
+
 def learn(cost_pct: float, min_samples: int) -> Path:
     existing = {row["sample_id"]: row for row in load_samples() if row.get("sample_id")}
     updates = []
@@ -1379,6 +1623,28 @@ def learn(cost_pct: float, min_samples: int) -> Path:
             lines.append("- 自适应扣分：" + "，".join(f"{k}-{v}分" for k, v in rules["flag_penalties"].items()))
     else:
         lines.append(f"- 完成样本少于 {min_samples}，暂不自动调整参数。")
+    lines += [
+        "",
+        "## 策略因子诊断",
+        "",
+    ]
+    tier_groups = grouped_summaries(done, "candidate_tier", min_count=3)
+    tag_groups = grouped_summaries(done, "strategy_tags", min_count=3, split=True)
+    flag_diag_groups = grouped_summaries(done, "flags", min_count=3, split=True)
+    if tier_groups:
+        lines.append("### 候选层级")
+        lines.extend(group_line(name, stat) for name, stat in tier_groups[:6])
+        lines.append("")
+    if tag_groups:
+        lines.append("### 策略标签")
+        lines.extend(group_line(name, stat) for name, stat in tag_groups[:8])
+        lines.append("")
+    if flag_diag_groups:
+        lines.append("### 扣分项")
+        weakest_flags = sorted(flag_diag_groups, key=lambda item: item[1]["avg"] if item[1]["avg"] is not None else 99)[:8]
+        lines.extend(group_line(name, stat) for name, stat in weakest_flags)
+    if not tier_groups and not tag_groups and not flag_diag_groups:
+        lines.append("- 暂无足够分组样本。")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 

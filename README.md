@@ -8,11 +8,22 @@ This repository contains a GitHub Actions based version of the tail-session stoc
 
 - Runs every China market weekday at 14:45 Asia/Shanghai.
 - Fetches public A-share market data from Eastmoney endpoints.
-- Scores candidates using market breadth, sector strength, trend, price-volume conditions, and intraday tail-session behavior.
+- Scores candidates using market breadth, sector strength, trend, price-volume conditions, intraday tail-session behavior, MA bias, market light status, limit-up/limit-down structure, and sector-relative strength.
 - Writes CSV and Markdown reports under `a_share_tail_picker/outputs/`.
 - Tracks next-day 10:00 performance when prior candidate files exist.
 - Writes learning samples and conservative adaptive rules under `a_share_tail_picker/learning/`.
 - Opens or comments on a GitHub Issue titled `A股尾盘选股日报` with the daily summary.
+
+## Strategy Layers
+
+The picker keeps the original strict tail-session filters, then adds several overlays inspired by the strategy reference repo:
+
+- Market light: breadth, average market move, and limit-up/limit-down structure produce green/yellow/red status.
+- No chasing: MA5/MA10/MA20 bias is recorded; MA5 bias above 10% is blocked.
+- Relative strength: candidates that outperform their sector by 2% or more receive a small bonus.
+- Tail-session quality: 14:30 onward strength is preferred when it is positive but not overheated.
+- Heat control: excessive turnover, volume ratio, and late-session spikes are penalized.
+- Candidate tiers: core candidates require score >= 92 or the adaptive minimum score if higher, moderate late-session gain, non-overheated MA5 bias, and non-red market status; other passing names are observation candidates.
 
 ## Manual Run
 

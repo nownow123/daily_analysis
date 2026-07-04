@@ -57,6 +57,7 @@ TRADE_FIELDS = [
     "stock_url",
     "score",
     "conclusion",
+    "candidate_tier",
     "data_quality",
     "buy_price",
     "next_date",
@@ -68,16 +69,27 @@ TRADE_FIELDS = [
     "net_return_1000",
     "market_label",
     "market_score",
+    "market_light_score",
+    "market_light_status",
     "sector_score",
     "trend_score",
     "quant_score",
     "intraday_score",
     "risk_score",
+    "strategy_score",
+    "strategy_penalty",
+    "strategy_tags",
     "pct",
     "volume_ratio",
     "turnover",
     "amount",
     "float_mv",
+    "sector_rank",
+    "sector_avg_pct",
+    "relative_strength",
+    "bias_ma5",
+    "bias_ma10",
+    "bias_ma20",
     "late_return",
     "last5_return",
     "day_range_pos",
@@ -91,6 +103,8 @@ DAILY_FIELDS = [
     "pick_date",
     "market_label",
     "market_score",
+    "market_light_score",
+    "market_light_status",
     "universe_count",
     "prefilter_count",
     "strict_count",
@@ -552,9 +566,12 @@ def analyze_historical_one(
     flags.extend(i_flags)
     sector_stat = sector_by_name.get(stock["industry"])
     sector = picker.score_sector(sector_stat)
+    strategy_score, strategy_penalty, strategy_tags, strategy_flags, relative_strength = picker.score_strategy_overlay(stock, detail, i_detail, sector_stat, market)
+    flags.extend(strategy_flags)
+    flags = list(dict.fromkeys(flags))
     risk = picker.risk_score(flags)
     penalty, hits = picker.adaptive_penalty(flags, rules)
-    score = max(0, min(100, market["score"] + sector + trend + quant + intraday + risk - penalty))
+    score = max(0, min(100, market["score"] + sector + trend + quant + intraday + risk + strategy_score - strategy_penalty - penalty))
     row = dict(stock)
     row.update(detail)
     row.update(i_detail)
@@ -564,14 +581,21 @@ def analyze_historical_one(
             "pick_time": pick_time.strftime("%H:%M:%S"),
             "market_score": market["score"],
             "market_label": market["label"],
+            "market_light_score": market.get("market_light_score"),
+            "market_light_status": market.get("market_light_status"),
+            "market_light_label": market.get("market_light_label"),
             "sector_score": sector,
             "trend_score": trend,
             "quant_score": quant,
             "intraday_score": intraday,
             "risk_score": risk,
+            "strategy_score": strategy_score,
+            "strategy_penalty": strategy_penalty,
+            "strategy_tags": "；".join(dict.fromkeys(strategy_tags)),
+            "relative_strength": relative_strength,
             "adaptive_penalty": penalty,
             "score": score,
-            "flags": "；".join(dict.fromkeys(flags)) if flags else "无明显扣分项",
+            "flags": "；".join(flags) if flags else "无明显扣分项",
             "adaptive_hits": "；".join(hits),
             "sector_rank": sector_stat["rank"] if sector_stat else "",
             "sector_avg_pct": sector_stat["avg_pct"] if sector_stat else "",
@@ -582,7 +606,8 @@ def analyze_historical_one(
     blockers = picker.strict_short_blockers(row, focus_min)
     row["short_blockers"] = "；".join(blockers)
     row["short_ready"] = "是" if not blockers else "否"
-    row["conclusion"] = "短线候选" if row["short_ready"] == "是" else "不推荐"
+    row["candidate_tier"] = picker.candidate_tier(row, focus_min)
+    row["conclusion"] = row["candidate_tier"] if row["short_ready"] == "是" else "不推荐"
     row["short_reason"] = picker.concise_reason(row)
     return row
 
@@ -840,7 +865,7 @@ def run_backtest(args: argparse.Namespace) -> tuple[Path, Path, Path]:
                 except Exception as exc:
                     print(f"analyze failed {pick_date}: {exc}", file=sys.stderr)
         strict = [row for row in analyzed if row.get("short_ready") == "是"]
-        strict.sort(key=lambda row: row["score"], reverse=True)
+        strict.sort(key=picker.candidate_sort_key)
         selected = strict[: args.top]
         day_trades: list[dict] = []
         for rank, row in enumerate(selected, 1):
@@ -854,6 +879,8 @@ def run_backtest(args: argparse.Namespace) -> tuple[Path, Path, Path]:
                 "pick_date": pick_date,
                 "market_label": market["label"],
                 "market_score": market["score"],
+                "market_light_score": market.get("market_light_score"),
+                "market_light_status": market.get("market_light_status"),
                 "universe_count": len(stock_rows),
                 "prefilter_count": len(prefilter),
                 "strict_count": len(strict),
