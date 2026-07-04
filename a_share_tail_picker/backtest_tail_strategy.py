@@ -66,6 +66,9 @@ TRADE_FIELDS = [
     "return_1000",
     "best_return_before_1000",
     "worst_return_before_1000",
+    "positive_avg_return_before_1000",
+    "positive_return_count_before_1000",
+    "net_positive_avg_return_before_1000",
     "net_return_1000",
     "market_label",
     "market_score",
@@ -125,6 +128,8 @@ DAILY_FIELDS = [
     "prefilter_count",
     "strict_count",
     "selected_count",
+    "avg_positive_return_before_1000",
+    "avg_net_positive_return_before_1000",
     "avg_return_1000",
     "avg_net_return_1000",
     "win_rate",
@@ -644,6 +649,22 @@ def price_before(rows: list[dict], target: dt.time) -> float | None:
     return rows[-1]["close"] if rows else None
 
 
+def positive_avg_return(rows: list[dict], buy: float, cost_pct: float) -> tuple[float | None, int, float | None]:
+    returns = []
+    if rows:
+        open_return = picker.pct(rows[0].get("open"), buy)
+        if open_return is not None and open_return > 0:
+            returns.append(open_return)
+    for row in rows:
+        value = picker.pct(row.get("close"), buy)
+        if value is not None and value > 0:
+            returns.append(value)
+    if not returns:
+        return None, 0, None
+    gross = mean(returns)
+    return gross, len(returns), gross - cost_pct if gross is not None else None
+
+
 def evaluate_trade(row: dict, history: list[dict], minute_store: MinuteStore, cost_pct: float) -> dict:
     trade = {key: "" for key in TRADE_FIELDS}
     for key in TRADE_FIELDS:
@@ -668,6 +689,13 @@ def evaluate_trade(row: dict, history: list[dict], minute_store: MinuteStore, co
         trade["return_1000"] = picker.pct(p1000, buy)
         trade["best_return_before_1000"] = picker.pct(max(highs), buy) if highs else ""
         trade["worst_return_before_1000"] = picker.pct(min(lows), buy) if lows else ""
+        positive_gross, positive_count, positive_net = positive_avg_return(next_minutes, buy, cost_pct)
+        trade["positive_avg_return_before_1000"] = positive_gross if positive_gross is not None else trade["return_1000"]
+        trade["positive_return_count_before_1000"] = positive_count
+        if positive_net is not None:
+            trade["net_positive_avg_return_before_1000"] = positive_net
+        elif f(trade["return_1000"]) is not None:
+            trade["net_positive_avg_return_before_1000"] = f(trade["return_1000"]) - cost_pct
         if f(trade["return_1000"]) is not None:
             trade["net_return_1000"] = f(trade["return_1000"]) - cost_pct
     return trade
@@ -711,15 +739,29 @@ def load_daily_histories(universe: list[dict], days: int, workers: int, refresh:
 
 
 def daily_stat(trades: list[dict]) -> dict:
-    vals = [f(row.get("net_return_1000")) for row in trades]
+    vals = [f(row.get("net_positive_avg_return_before_1000")) for row in trades]
     vals = [v for v in vals if v is not None]
-    gross = [f(row.get("return_1000")) for row in trades]
+    gross = [f(row.get("positive_avg_return_before_1000")) for row in trades]
     gross = [v for v in gross if v is not None]
+    vals_1000 = [f(row.get("net_return_1000")) for row in trades]
+    vals_1000 = [v for v in vals_1000 if v is not None]
+    gross_1000 = [f(row.get("return_1000")) for row in trades]
+    gross_1000 = [v for v in gross_1000 if v is not None]
     if not vals:
-        return {"avg_net": None, "avg_gross": mean(gross), "win_rate": None, "best": None, "worst": None}
+        return {
+            "avg_net": None,
+            "avg_gross": mean(gross),
+            "avg_net_1000": mean(vals_1000),
+            "avg_gross_1000": mean(gross_1000),
+            "win_rate": None,
+            "best": None,
+            "worst": None,
+        }
     return {
         "avg_net": mean(vals),
         "avg_gross": mean(gross),
+        "avg_net_1000": mean(vals_1000),
+        "avg_gross_1000": mean(gross_1000),
         "win_rate": sum(1 for value in vals if value > 0) / len(vals),
         "best": max(vals),
         "worst": min(vals),
@@ -727,7 +769,7 @@ def daily_stat(trades: list[dict]) -> dict:
 
 
 def compound_daily(daily_rows: list[dict]) -> float | None:
-    values = [f(row.get("avg_net_return_1000")) for row in daily_rows]
+    values = [f(row.get("avg_net_positive_return_before_1000")) for row in daily_rows]
     values = [value for value in values if value is not None]
     if not values:
         return None
@@ -746,9 +788,9 @@ def write_report(
     histories_count: int,
 ) -> Path:
     report_path = output_dir / f"backtest_summary_{stamp()}.md"
-    done_trades = [row for row in trade_rows if f(row.get("net_return_1000")) is not None]
-    stock_returns = [f(row.get("net_return_1000")) for row in done_trades]
-    basket_returns = [f(row.get("avg_net_return_1000")) for row in daily_rows if f(row.get("avg_net_return_1000")) is not None]
+    done_trades = [row for row in trade_rows if f(row.get("net_positive_avg_return_before_1000")) is not None]
+    stock_returns = [f(row.get("net_positive_avg_return_before_1000")) for row in done_trades]
+    basket_returns = [f(row.get("avg_net_positive_return_before_1000")) for row in daily_rows if f(row.get("avg_net_positive_return_before_1000")) is not None]
     stock_avg = mean(stock_returns)
     basket_avg = mean(basket_returns)
     stock_win = sum(1 for value in stock_returns if value and value > 0) / len(stock_returns) if stock_returns else None
@@ -759,7 +801,7 @@ def write_report(
         "",
         f"- 生成时间：{cn_now_text()}",
         f"- 回放区间：{args.start} 至 {args.end}",
-        f"- 买入时间假设：{args.pick_time}；卖出评估：次日 10:00 前，默认用 10:00 价格计算。",
+        f"- 买入时间假设：{args.pick_time}；卖出评估：次日 9:30-10:00 区间内正收益样本的平均值；若无正收益，则用10:00或最后可见价格收益。",
         f"- 单笔成本扣减：{args.cost_pct:.2f}%",
         f"- 当前活跃沪深A股覆盖：{universe_count} 只；成功取得日K：{histories_count} 只。",
         f"- 每日最多选取：{args.top} 只严格候选。",
@@ -774,16 +816,16 @@ def write_report(
         "## 总体结果",
         "",
         f"- 有候选交易日：{len([row for row in daily_rows if int(row.get('selected_count') or 0) > 0])} 天",
-        f"- 完成 10:00 评估股票数：{len(done_trades)} 只",
-        f"- 单股平均净收益：{fmt_pct(stock_avg)}",
+        f"- 完成区间收益评估股票数：{len(done_trades)} 只",
+        f"- 单股平均净收益（区间正收益均值口径）：{fmt_pct(stock_avg)}",
         f"- 单股胜率：{'-' if stock_win is None else f'{stock_win:.1%}'}",
-        f"- 每日等权篮子平均净收益：{fmt_pct(basket_avg)}",
+        f"- 每日等权篮子平均净收益（区间正收益均值口径）：{fmt_pct(basket_avg)}",
         f"- 每日篮子胜率：{'-' if day_win is None else f'{day_win:.1%}'}",
         f"- 区间日复利模拟：{fmt_pct(compounded)}",
         "",
         "## 每日结果",
         "",
-        "| 日期 | 市场 | 候选数 | 平均10:00净收益 | 胜率 | 最好 | 最差 | 候选 |",
+        "| 日期 | 市场 | 候选数 | 区间口径平均净收益 | 胜率 | 最好 | 最差 | 候选 |",
         "|---|---|---:|---:|---:|---:|---:|---|",
     ]
     for row in daily_rows:
@@ -791,7 +833,7 @@ def write_report(
         win_rate_text = "-" if win_rate is None else f"{win_rate:.0%}"
         lines.append(
             f"| {row['pick_date']} | {row['market_label']} {row['market_score']}/20 | {row['selected_count']} | "
-            f"{fmt_pct(row['avg_net_return_1000'])} | {win_rate_text} | "
+            f"{fmt_pct(row['avg_net_positive_return_before_1000'])} | {win_rate_text} | "
             f"{fmt_pct(row['best_stock_return'])} | {fmt_pct(row['worst_stock_return'])} | {row['selected']} |"
         )
     lines.extend(
@@ -799,15 +841,16 @@ def write_report(
             "",
             "## 前20笔明细",
             "",
-            "| 日期 | 股票 | 分数 | 买入价 | 次日10:00 | 净收益 | 主要理由 |",
-            "|---|---|---:|---:|---:|---:|---|",
+            "| 日期 | 股票 | 分数 | 买入价 | 区间口径收益 | 10:00收益 | 净收益 | 主要理由 |",
+            "|---|---|---:|---:|---:|---:|---:|---|",
         ]
     )
     for row in trade_rows[:20]:
         link = f"[{row['name']} {row['code']}]({row['stock_url']})"
         lines.append(
             f"| {row['pick_date']} | {link} | {fmt_num(row['score'], 0)} | {fmt_num(row['buy_price'])} | "
-            f"{fmt_pct(row['return_1000'])} | {fmt_pct(row['net_return_1000'])} | {row.get('short_reason') or '-'} |"
+            f"{fmt_pct(row['positive_avg_return_before_1000'])} | {fmt_pct(row['return_1000'])} | "
+            f"{fmt_pct(row['net_positive_avg_return_before_1000'])} | {row.get('short_reason') or '-'} |"
         )
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return report_path
@@ -905,8 +948,10 @@ def run_backtest(args: argparse.Namespace) -> tuple[Path, Path, Path]:
                 "prefilter_count": len(prefilter),
                 "strict_count": len(strict),
                 "selected_count": len(selected),
-                "avg_return_1000": stat["avg_gross"],
-                "avg_net_return_1000": stat["avg_net"],
+                "avg_positive_return_before_1000": stat["avg_gross"],
+                "avg_net_positive_return_before_1000": stat["avg_net"],
+                "avg_return_1000": stat["avg_gross_1000"],
+                "avg_net_return_1000": stat["avg_net_1000"],
                 "win_rate": stat["win_rate"],
                 "best_stock_return": stat["best"],
                 "worst_stock_return": stat["worst"],
