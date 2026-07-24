@@ -1,3 +1,12 @@
+market data retry 1/1: https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.002020&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
+market data retry 1/1: http://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.002020&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
+Eastmoney trends failed for 002020: market data request failed after retries: Remote end closed connection without response; fallback to Tencent
+market data retry 1/1: https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.002150&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
+market data retry 1/1: http://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.002150&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
+Eastmoney trends failed for 002150: market data request failed after retries: Remote end closed connection without response; fallback to Tencent
+market data retry 1/1: https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.300539&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
+market data retry 1/1: http://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.300539&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
+Eastmoney trends failed for 300539: market data request failed after retries: Remote end closed connection without response; fallback to Tencent
 market data retry 1/1: https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.300516&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
 market data retry 1/1: http://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.300516&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
 Eastmoney trends failed for 300516: market data request failed after retries: Remote end closed connection without response; fallback to Tencent
@@ -31,9 +40,12 @@ Eastmoney trends failed for 600693: market data request failed after retries: Re
 market data retry 1/1: https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.002728&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
 market data retry 1/1: http://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.002728&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
 Eastmoney trends failed for 002728: market data request failed after retries: Remote end closed connection without response; fallback to Tencent
+market data retry 1/1: https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.000612&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
+market data retry 1/1: http://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.000612&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
+Eastmoney trends failed for 000612: market data request failed after retries: Remote end closed connection without response; fallback to Tencent
 efinance is not installed; fallback to Tencent quote API
 spot source: tencent rows=5001
-LEARNING_REPORT=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/learning/learning_report_20260723_201413.md
-CANDIDATES_CSV=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-23/candidates_20260723_201507.csv
-REPORT=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-23/report_20260723_201507.md
-WECHAT_SUMMARY=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-23/wechat_summary_20260723_201507.md
+LEARNING_REPORT=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/learning/learning_report_20260724_200629.md
+CANDIDATES_CSV=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-24/candidates_20260724_200721.csv
+REPORT=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-24/report_20260724_200721.md
+WECHAT_SUMMARY=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-24/wechat_summary_20260724_200721.md
