@@ -1,12 +1,4 @@
-market data retry 1/1: https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=1.603009&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
-market data retry 1/1: http://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=1.603009&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
-Eastmoney trends failed for 603009: market data request failed after retries: Remote end closed connection without response; fallback to Tencent
-market data retry 1/1: https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.002020&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
-market data retry 1/1: http://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.002020&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
-Eastmoney trends failed for 002020: market data request failed after retries: Remote end closed connection without response; fallback to Tencent
 market data retry 1/1: https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.300539&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
-market data retry 1/1: http://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.300539&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
-Eastmoney trends failed for 300539: market data request failed after retries: Remote end closed connection without response; fallback to Tencent
 market data retry 1/1: https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.300516&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
 market data retry 1/1: http://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.300516&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
 Eastmoney trends failed for 300516: market data request failed after retries: Remote end closed connection without response; fallback to Tencent
@@ -56,8 +48,8 @@ market data retry 1/1: https://push2his.eastmoney.com/api/qt/stock/trends2/get?s
 market data retry 1/1: http://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=0.300468&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf12%2Cf13&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58&ndays=10&iscr=0&iscca=0 -> Remote end closed connection without response
 Eastmoney trends failed for 300468: market data request failed after retries: Remote end closed connection without response; fallback to Tencent
 efinance is not installed; fallback to Tencent quote API
-spot source: tencent rows=5001
-LEARNING_REPORT=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/learning/learning_report_20260730_201712.md
-CANDIDATES_CSV=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-30/candidates_20260730_201821.csv
-REPORT=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-30/report_20260730_201821.md
-WECHAT_SUMMARY=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-30/wechat_summary_20260730_201821.md
+spot source: tencent rows=5003
+LEARNING_REPORT=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/learning/learning_report_20260731_173309.md
+CANDIDATES_CSV=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-31/candidates_20260731_173401.csv
+REPORT=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-31/report_20260731_173401.md
+WECHAT_SUMMARY=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-07-31/wechat_summary_20260731_173401.md
