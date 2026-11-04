@@ -1,10 +1,4 @@
-Tencent kline failed for 300249: HTTP Error 501: Not Implemented; fallback to Eastmoney
-Tencent kline failed for 300518: HTTP Error 501: Not Implemented; fallback to Eastmoney
-Tencent kline failed for 002212: HTTP Error 501: Not Implemented; fallback to Eastmoney
-Tencent kline failed for 002284: HTTP Error 501: Not Implemented; fallback to Eastmoney
-Tencent kline failed for 600203: HTTP Error 501: Not Implemented; fallback to Eastmoney
 Tencent kline failed for 002251: HTTP Error 501: Not Implemented; fallback to Eastmoney
-Tencent kline failed for 002456: HTTP Error 501: Not Implemented; fallback to Eastmoney
 Tencent kline failed for 301310: HTTP Error 501: Not Implemented; fallback to Eastmoney
 Tencent kline failed for 301305: HTTP Error 501: Not Implemented; fallback to Eastmoney
 Tencent kline failed for 603867: HTTP Error 501: Not Implemented; fallback to Eastmoney
@@ -57,18 +51,83 @@ Tencent kline failed for 002421: HTTP Error 501: Not Implemented; fallback to Ea
 Tencent kline failed for 002389: HTTP Error 501: Not Implemented; fallback to Eastmoney
 Tencent kline failed for 600592: HTTP Error 501: Not Implemented; fallback to Eastmoney
 efinance is not installed; fallback to Tencent quote API
-spot source: tencent rows=5033
-Tencent kline failed for 002531: HTTP Error 501: Not Implemented; fallback to Eastmoney
-Tencent kline failed for 002612: HTTP Error 501: Not Implemented; fallback to Eastmoney
-Tencent kline failed for 600285: HTTP Error 501: Not Implemented; fallback to Eastmoney
-Tencent kline failed for 603236: HTTP Error 501: Not Implemented; fallback to Eastmoney
-Tencent kline failed for 000690: HTTP Error 501: Not Implemented; fallback to Eastmoney
-Tencent kline failed for 301291: HTTP Error 501: Not Implemented; fallback to Eastmoney
-Tencent kline failed for 301069: HTTP Error 501: Not Implemented; fallback to Eastmoney
-Tencent kline failed for 600559: HTTP Error 501: Not Implemented; fallback to Eastmoney
-Tencent kline failed for 000400: HTTP Error 501: Not Implemented; fallback to Eastmoney
-Tencent kline failed for 688411: HTTP Error 501: Not Implemented; fallback to Eastmoney
-LEARNING_REPORT=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/learning/learning_report_20261103_224802.md
-CANDIDATES_CSV=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-11-03/candidates_20261103_224914.csv
-REPORT=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-11-03/report_20261103_224914.md
-WECHAT_SUMMARY=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-11-03/wechat_summary_20261103_224914.md
+spot source: tencent rows=5032
+Tencent kline failed for 300118: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 688390: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 688559: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300077: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 688388: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300302: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300049: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300131: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300459: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300468: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 301071: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 301150: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 301251: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 301510: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 688031: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 688518: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 688798: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 000070: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 000815: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 002167: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 002174: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 002192: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 002506: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300065: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300199: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300323: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300434: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300438: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300568: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300576: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300693: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300709: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300724: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 301013: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 301357: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 301551: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 688669: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 688677: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 688717: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 002151: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 002240: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 002245: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 002342: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 002351: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 002579: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 002624: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 002654: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 002815: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300063: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300322: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300328: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 300825: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 001258: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 002407: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 002549: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 002640: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 002738: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 600110: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 600186: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 600267: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 600343: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 600396: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 600410: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 601519: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 603011: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 603601: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 600367: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 603538: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 600103: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 600108: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 600301: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 603399: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 603687: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 603890: HTTP Error 501: Not Implemented; fallback to Eastmoney
+Tencent kline failed for 603990: HTTP Error 501: Not Implemented; fallback to Eastmoney
+LEARNING_REPORT=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/learning/learning_report_20261104_225900.md
+CANDIDATES_CSV=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-11-04/candidates_20261104_230023.csv
+REPORT=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-11-04/report_20261104_230023.md
+WECHAT_SUMMARY=/home/runner/work/daily_analysis/daily_analysis/a_share_tail_picker/outputs/2026-11-04/wechat_summary_20261104_230023.md
